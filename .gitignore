@@ -1,0 +1,15 @@
+# Бинарники
+/depgraph
+/depgraph.exe
+*.exe
+
+# Go
+/vendor/
+
+# Редакторы/ОС
+.DS_Store
+.idea/
+.vscode/
+
+# Локальные инструменты
+.claude/

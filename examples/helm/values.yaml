@@ -1,0 +1,6 @@
+replicas: 3
+image:
+  repository: myorg/api
+  tag: "1.4.0"
+externalApi: https://api.stripe.com
+host: app.example.com

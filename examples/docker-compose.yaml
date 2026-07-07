@@ -1,0 +1,40 @@
+# Пример для demo: типичное веб-приложение с БД, кэшем и внешним платёжным API.
+services:
+  web:
+    image: nginx:alpine
+    ports: ["80:80"]
+    depends_on: [api]
+    environment:
+      API_URL: http://api:8000
+    networks: [frontend]
+
+  api:
+    build: ./api
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      - DATABASE_URL=postgres://db:5432/app
+      - REDIS_HOST=redis
+      - PAYMENTS_URL=https://api.stripe.com
+      - MAIL_HOST=smtp.sendgrid.net
+    networks: [frontend, backend]
+
+  worker:
+    build: ./worker
+    environment:
+      - DATABASE_URL=postgres://db:5432/app
+      - BROKER=amqp://guest:guest@rabbitmq:5672/
+    networks: [backend]
+
+  db:
+    image: postgres:15
+    networks: [backend]
+
+  redis:
+    image: redis:7
+    networks: [backend]
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    networks: [backend]

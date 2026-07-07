@@ -1,0 +1,72 @@
+# Шаблоны Helm-чарта (эквивалент склейки templates/*.yaml).
+# Вставьте в depgraph при формате «Helm-чарт»; release=myapp, chart=mychart.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-api
+spec:
+  replicas: {{ .Values.replicas | default 2 }}
+  template:
+    spec:
+      containers:
+        - name: api
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          env:
+            - name: DATABASE_URL
+              value: postgres://{{ .Release.Name }}-postgres:5432/app
+            - name: REDIS_HOST
+              value: {{ .Release.Name }}-redis
+            - name: BROKER_URL
+              value: amqp://{{ .Release.Name }}-rabbitmq:5672/
+            - name: PAYMENTS_URL
+              value: {{ .Values.externalApi }}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ .Release.Name }}-worker
+spec:
+  template:
+    spec:
+      containers:
+        - name: worker
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          env:
+            - name: DATABASE_URL
+              value: postgres://{{ .Release.Name }}-postgres:5432/app
+            - name: BROKER_URL
+              value: amqp://{{ .Release.Name }}-rabbitmq:5672/
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-api
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-postgres
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-redis
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-rabbitmq
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Release.Name }}-ingress
+spec:
+  rules:
+    - host: {{ .Values.host }}
+      http:
+        paths:
+          - path: /
+            backend:
+              service:
+                name: {{ .Release.Name }}-api

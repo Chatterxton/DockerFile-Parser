@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>depgraph — карта зависимостей сервисов</title>
+  <style>
+    :root {
+      --bg: #0f172a; --panel: #ffffff; --muted: #64748b; --line: #e2e8f0;
+      --accent: #2563eb; --accent-d: #1d4ed8; --err: #dc2626;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      color: #0f172a; background: #f1f5f9;
+    }
+    header {
+      background: var(--bg); color: #fff; padding: 14px 20px;
+      display: flex; align-items: baseline; gap: 12px;
+    }
+    header h1 { font-size: 18px; margin: 0; font-weight: 650; }
+    header .sub { color: #94a3b8; font-size: 13px; }
+    main { display: grid; grid-template-columns: 400px 1fr; gap: 16px; padding: 16px; }
+    @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+    .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
+    .panel h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 10px; }
+    label { display: block; font-size: 12px; color: var(--muted); margin: 10px 0 4px; }
+    select, input[type=text] {
+      width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; font-size: 13px; background: #fff;
+    }
+    textarea {
+      width: 100%; padding: 10px; border: 1px solid var(--line); border-radius: 8px;
+      font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 12.5px; resize: vertical; tab-size: 2;
+    }
+    #yaml { height: 300px; }
+    #values { height: 120px; }
+    .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    button {
+      background: var(--accent); color: #fff; border: 0; border-radius: 8px; padding: 9px 14px;
+      font-size: 13px; font-weight: 600; cursor: pointer;
+    }
+    button:hover { background: var(--accent-d); }
+    button.ghost { background: #fff; color: var(--accent); border: 1px solid var(--line); }
+    button.ghost:hover { background: #f8fafc; }
+    #error { color: var(--err); font-size: 13px; margin-top: 10px; white-space: pre-wrap; display: none; }
+    .toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+    .toolbar .grow { flex: 1; }
+    .toolbar label { margin: 0; }
+    .toolbar select { width: auto; min-width: 160px; }
+    #diagram { overflow: auto; min-height: 340px; display: flex; justify-content: center; align-items: flex-start; }
+    #diagram svg { max-width: 100%; height: auto; }
+    .legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 12px; color: var(--muted); margin-top: 10px; }
+    .legend span { display: inline-flex; align-items: center; gap: 6px; }
+    .swatch { width: 14px; height: 14px; border-radius: 3px; display: inline-block; border: 1px solid #0002; }
+    .hint { font-size: 12px; color: var(--muted); margin-top: 6px; }
+    .check { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: #0f172a; }
+    .check input { width: auto; }
+    #helmFields { display: none; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>depgraph</h1>
+    <span class="sub">карта зависимостей сервисов из docker-compose и Helm</span>
+  </header>
+
+  <main>
+    <section class="panel">
+      <h2>Вход</h2>
+      <label for="format">Формат</label>
+      <select id="format">
+        <option value="compose">docker-compose</option>
+        <option value="helm">Helm-чарт</option>
+      </select>
+
+      <div id="helmFields">
+        <div class="two">
+          <div>
+            <label for="release">Имя релиза</label>
+            <input type="text" id="release" value="myapp">
+          </div>
+          <div>
+            <label for="chartName">Имя чарта</label>
+            <input type="text" id="chartName" value="mychart">
+          </div>
+        </div>
+        <label for="values">values.yaml</label>
+        <textarea id="values" spellcheck="false"></textarea>
+      </div>
+
+      <label for="file">Загрузить файл</label>
+      <input type="file" id="file" accept=".yml,.yaml,.tpl">
+
+      <label for="yaml" id="yamlLabel">или вставьте docker-compose.yaml</label>
+      <textarea id="yaml" spellcheck="false"></textarea>
+
+      <label for="patterns">Паттерны внешних сервисов (через запятую)</label>
+      <input type="text" id="patterns" placeholder="*.rds.amazonaws.com, *.internal">
+
+      <div class="row" style="margin-top:12px;">
+        <button id="build">Построить схему</button>
+      </div>
+      <div id="error"></div>
+    </section>
+
+    <section class="panel">
+      <h2>Схема</h2>
+      <div class="toolbar">
+        <label for="focus">Фокус:</label>
+        <select id="focus"><option value="">— весь граф —</option></select>
+        <label class="check"><input type="checkbox" id="neighbors"> только соседи</label>
+        <span class="grow"></span>
+        <button class="ghost" id="copyMermaid">Копировать Mermaid</button>
+        <button class="ghost" id="downloadSvg">Скачать SVG</button>
+        <button class="ghost" id="downloadPng">Скачать PNG</button>
+        <button class="ghost" id="downloadDot">Скачать .dot</button>
+      </div>
+      <div id="diagram"></div>
+      <div class="legend">
+        <span><span class="swatch" style="background:#fff"></span> сервис</span>
+        <span><span class="swatch" style="background:#e0e7ff"></span> база/хранилище</span>
+        <span><span class="swatch" style="background:#fef3c7"></span> внешний</span>
+        <span><span class="swatch" style="background:#dcfce7"></span> 🌐 точка входа</span>
+        <span>→ сплошная — сетевая связь · ⇢ пунктир — depends_on/link</span>
+      </div>
+      <div class="hint" id="hint"></div>
+    </section>
+  </main>
+
+  <script src="/assets/mermaid.min.js"></script>
+  <script>
+    mermaid.initialize({
+      startOnLoad: false, securityLevel: 'loose', theme: 'default',
+      flowchart: { curve: 'basis', htmlLabels: false }, // htmlLabels:false → чистый SVG-текст, надёжный экспорт в PNG
+    });
+
+    const $ = (id) => document.getElementById(id);
+    let last = { mermaid: '', dot: '', graph: null };
+
+    const COMPOSE_SAMPLE = `services:
+  web:
+    image: nginx:alpine
+    ports: ["80:80"]
+    depends_on: [api]
+    environment:
+      API_URL: http://api:8000
+    networks: [frontend]
+  api:
+    build: ./api
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      - DATABASE_URL=postgres://db:5432/app
+      - REDIS_HOST=redis
+      - PAYMENTS_URL=https://api.stripe.com
+    networks: [frontend, backend]
+  db:
+    image: postgres:15
+    networks: [backend]
+  redis:
+    image: redis:7
+    networks: [backend]
+`;
+
+    const HELM_TEMPLATES = `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-api
+spec:
+  template:
+    spec:
+      containers:
+        - name: api
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          env:
+            - name: DATABASE_URL
+              value: postgres://{{ .Release.Name }}-postgres:5432/app
+            - name: REDIS_HOST
+              value: {{ .Release.Name }}-redis
+            - name: PAYMENTS_URL
+              value: {{ .Values.externalApi }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-api
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-postgres
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-redis
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Release.Name }}-ingress
+spec:
+  rules:
+    - http:
+        paths:
+          - path: /
+            backend:
+              service:
+                name: {{ .Release.Name }}-api
+`;
+
+    const HELM_VALUES = `image:
+  repository: myorg/api
+  tag: "1.2.3"
+externalApi: https://api.stripe.com
+`;
+
+    // Начальное состояние — compose.
+    $('yaml').value = COMPOSE_SAMPLE;
+    $('values').value = HELM_VALUES;
+
+    function applyFormat() {
+      const helm = $('format').value === 'helm';
+      $('helmFields').style.display = helm ? 'block' : 'none';
+      $('yamlLabel').textContent = helm
+        ? 'шаблоны Helm (templates/*.yaml, через ---)'
+        : 'или вставьте docker-compose.yaml';
+      // Подставляем пример, только если поле не трогали (равно другому примеру).
+      if (helm && $('yaml').value.trim() === COMPOSE_SAMPLE.trim()) {
+        $('yaml').value = HELM_TEMPLATES;
+      } else if (!helm && $('yaml').value.trim() === HELM_TEMPLATES.trim()) {
+        $('yaml').value = COMPOSE_SAMPLE;
+      }
+    }
+
+    $('file').addEventListener('change', (e) => {
+      const f = e.target.files[0];
+      if (!f) return;
+      const r = new FileReader();
+      r.onload = () => { $('yaml').value = r.result; build(); };
+      r.readAsText(f);
+    });
+
+    function showError(msg) {
+      const el = $('error');
+      el.textContent = msg;
+      el.style.display = msg ? 'block' : 'none';
+    }
+
+    async function build() {
+      showError('');
+      const patterns = $('patterns').value.split(',').map(s => s.trim()).filter(Boolean);
+      const body = {
+        yaml: $('yaml').value,
+        format: $('format').value,
+        values: $('values').value,
+        release: $('release').value,
+        chartName: $('chartName').value,
+        externalPatterns: patterns,
+        focus: $('focus').value,
+        neighborsOnly: $('neighbors').checked,
+      };
+      let resp;
+      try {
+        resp = await fetch('/api/graph', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+      } catch (err) { showError('Сеть недоступна: ' + err); return; }
+
+      const data = await resp.json();
+      if (!resp.ok || data.error) { showError(data.error || ('HTTP ' + resp.status)); return; }
+
+      last = data;
+      populateFocus(data.graph);
+      await renderDiagram(data.mermaid);
+      $('hint').textContent =
+        `Узлов: ${data.graph.nodes.length} · связей: ${data.graph.edges.length}`;
+    }
+
+    function populateFocus(graph) {
+      const sel = $('focus');
+      const cur = sel.value;
+      const own = graph.nodes.filter(n => !n.external).map(n => n.id).sort();
+      sel.innerHTML = '<option value="">— весь граф —</option>' +
+        own.map(id => `<option value="${id}">${id}</option>`).join('');
+      if (own.includes(cur)) sel.value = cur;
+    }
+
+    async function renderDiagram(code) {
+      if (!code.trim()) { $('diagram').innerHTML = '<p style="color:#94a3b8">Схема пуста — узлов не найдено.</p>'; return; }
+      try {
+        const { svg } = await mermaid.render('theGraph', code);
+        $('diagram').innerHTML = svg;
+      } catch (err) {
+        showError('Не удалось нарисовать схему: ' + err.message);
+      }
+    }
+
+    $('build').addEventListener('click', build);
+    $('format').addEventListener('change', () => { applyFormat(); build(); });
+    $('focus').addEventListener('change', build);
+    $('neighbors').addEventListener('change', build);
+    function downloadBlob(blob, filename) {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = filename;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    }
+
+    function currentSVG() {
+      return document.querySelector('#diagram svg');
+    }
+
+    function svgSize(svg) {
+      if (svg.viewBox && svg.viewBox.baseVal && svg.viewBox.baseVal.width) {
+        return { w: svg.viewBox.baseVal.width, h: svg.viewBox.baseVal.height };
+      }
+      const r = svg.getBoundingClientRect();
+      return { w: r.width, h: r.height };
+    }
+
+    function downloadSVG() {
+      const svg = currentSVG();
+      if (!svg) { showError('Сначала постройте схему'); return; }
+      const data = new XMLSerializer().serializeToString(svg);
+      downloadBlob(new Blob([data], { type: 'image/svg+xml;charset=utf-8' }), 'dependencies.svg');
+    }
+
+    function downloadPNG() {
+      const svg = currentSVG();
+      if (!svg) { showError('Сначала постройте схему'); return; }
+      const { w, h } = svgSize(svg);
+      const data = new XMLSerializer().serializeToString(svg);
+      const url = URL.createObjectURL(new Blob([data], { type: 'image/svg+xml;charset=utf-8' }));
+      const img = new Image();
+      img.onload = () => {
+        const scale = 2; // ретина-качество
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.ceil(w * scale);
+        canvas.height = Math.ceil(h * scale);
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.setTransform(scale, 0, 0, scale, 0, 0);
+        ctx.drawImage(img, 0, 0, w, h);
+        URL.revokeObjectURL(url);
+        canvas.toBlob((blob) => downloadBlob(blob, 'dependencies.png'), 'image/png');
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); showError('Не удалось сконвертировать в PNG'); };
+      img.src = url;
+    }
+
+    $('copyMermaid').addEventListener('click', () => navigator.clipboard.writeText(last.mermaid));
+    $('downloadSvg').addEventListener('click', downloadSVG);
+    $('downloadPng').addEventListener('click', downloadPNG);
+    $('downloadDot').addEventListener('click', () =>
+      downloadBlob(new Blob([last.dot], { type: 'text/vnd.graphviz' }), 'dependencies.dot'));
+
+    applyFormat();
+    build();
+  </script>
+</body>
+</html>
