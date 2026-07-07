@@ -164,7 +164,15 @@
     networks: [backend]
 `;
 
-    const HELM_TEMPLATES = `apiVersion: apps/v1
+    const HELM_TEMPLATES = `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-config
+data:
+  MAIL_HOST: smtp.sendgrid.net
+  LOG_LEVEL: info
+---
+apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ .Release.Name }}-api
@@ -174,9 +182,12 @@ spec:
       containers:
         - name: api
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          envFrom:
+            - configMapRef:
+                name: {{ .Release.Name }}-config
           env:
             - name: DATABASE_URL
-              value: postgres://{{ .Release.Name }}-postgres:5432/app
+              value: postgres://{{ .Release.Name }}-postgres.default.svc.cluster.local:5432/app
             - name: REDIS_HOST
               value: {{ .Release.Name }}-redis
             - name: PAYMENTS_URL

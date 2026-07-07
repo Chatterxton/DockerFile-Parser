@@ -241,6 +241,108 @@ func TestParseIngressAndLoadBalancerEntries(t *testing.T) {
 	}
 }
 
+func TestParseResolvesClusterFQDN(t *testing.T) {
+	tpl := `
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-app
+spec:
+  template:
+    spec:
+      containers:
+        - name: app
+          image: myorg/app
+          env:
+            - name: DB
+              value: postgres://{{ .Release.Name }}-db.default.svc.cluster.local:5432/app
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-db
+`
+	g, err := Parse([]byte(tpl), nil, Options{Release: "myapp"})
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if edge(g, "myapp-app", "myapp-db") == nil {
+		t.Fatalf("k8s-FQDN должен свернуться к своему myapp-db; рёбра: %+v", g.Edges)
+	}
+	if node(g, "myapp-db.default.svc.cluster.local") != nil {
+		t.Fatalf("не должно быть фантомного внешнего узла")
+	}
+}
+
+const envfromTemplates = `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-config
+data:
+  DATABASE_URL: postgres://{{ .Release.Name }}-db:5432/app
+  CACHE_HOST: {{ .Release.Name }}-redis
+  BROKER_URL: amqp://{{ .Release.Name }}-rabbitmq:5672/
+  LOG_LEVEL: debug
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-app
+spec:
+  template:
+    spec:
+      containers:
+        - name: app
+          image: myorg/app
+          envFrom:
+            - configMapRef:
+                name: {{ .Release.Name }}-config
+          env:
+            - name: BROKER
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .Release.Name }}-config
+                  key: BROKER_URL
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-db
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-redis
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-rabbitmq
+`
+
+func TestParseEnvFromConfigMap(t *testing.T) {
+	g, err := Parse([]byte(envfromTemplates), nil, Options{Release: "myapp"})
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	// envFrom подтянул весь ConfigMap → связи к db и redis
+	if edge(g, "myapp-app", "myapp-db") == nil {
+		t.Fatalf("DATABASE_URL из ConfigMap (envFrom) должен дать ребро к db; рёбра: %+v", g.Edges)
+	}
+	if edge(g, "myapp-app", "myapp-redis") == nil {
+		t.Fatalf("CACHE_HOST из ConfigMap (envFrom) должен дать ребро к redis")
+	}
+	// valueFrom.configMapKeyRef → конкретный ключ
+	if edge(g, "myapp-app", "myapp-rabbitmq") == nil {
+		t.Fatalf("BROKER_URL из valueFrom.configMapKeyRef должен дать ребро к rabbitmq")
+	}
+	// LOG_LEVEL=debug не должен породить узел
+	if node(g, "debug") != nil {
+		t.Fatalf("значение LOG_LEVEL=debug не должно становиться узлом")
+	}
+}
+
 func TestParseExternalFromValues(t *testing.T) {
 	g := parseFixture(t)
 	if n := node(g, "api.stripe.com"); n == nil || !n.External {

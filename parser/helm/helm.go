@@ -161,7 +161,8 @@ func Parse(templates, valuesYAML []byte, opts Options) (*model.Graph, error) {
 	// Разбираем каждый документ; ошибочные пропускаем (best-effort).
 	var resources []resource
 	names := map[string]bool{}
-	entryTargets := map[string]string{} // сервис снаружи → источник (ingress/тип)
+	entryTargets := map[string]string{}       // сервис снаружи → источник (ingress/тип)
+	sources := map[string]map[string]string{} // ConfigMap/Secret → его данные
 	for _, part := range docSep.Split(rendered, -1) {
 		if strings.TrimSpace(part) == "" {
 			continue
@@ -172,6 +173,13 @@ func Parse(templates, valuesYAML []byte, opts Options) (*model.Graph, error) {
 		}
 		kind := str(doc["kind"])
 		name := metaName(doc)
+
+		switch kind {
+		case "ConfigMap":
+			sources[name] = strMap(doc["data"])
+		case "Secret":
+			sources[name] = strMap(doc["stringData"]) // data — base64, пропускаем
+		}
 
 		if kind == "Ingress" {
 			for _, b := range ingressBackends(doc) {
@@ -249,15 +257,18 @@ func Parse(templates, valuesYAML []byte, opts Options) (*model.Graph, error) {
 	sort.SliceStable(workloads, func(i, j int) bool { return workloads[i].name < workloads[j].name })
 
 	for _, r := range workloads {
-		for _, ev := range containerEnv(r.doc) {
+		for _, ev := range containerEnv(r.doc, sources) {
 			for _, host := range heuristic.ExtractHosts(ev.value) {
-				if host == "" || host == r.name || ignore[host] {
+				if host == "" || ignore[host] {
 					continue
 				}
-				switch {
-				case names[host]:
-					g.AddEdge(r.name, host, model.EdgeNetwork, ev.name)
-				case heuristic.IsExternalHost(host, opts.ExternalPatterns):
+				if target, ok := heuristic.ResolveInternal(host, names); ok {
+					if target != r.name {
+						g.AddEdge(r.name, target, model.EdgeNetwork, ev.name)
+					}
+					continue
+				}
+				if heuristic.IsExternalHost(host, opts.ExternalPatterns) {
 					g.AddNode(model.Node{ID: host, Label: host, Kind: model.KindExternal, External: true})
 					g.AddEdge(r.name, host, model.EdgeNetwork, ev.name)
 				}
@@ -280,24 +291,67 @@ func containerImages(doc map[string]any) []string {
 	return imgs
 }
 
-func containerEnv(doc map[string]any) []envPair {
+// containerEnv собирает пары (имя, значение) окружения контейнеров: инлайновые
+// env[].value, env[].valueFrom (configMapKeyRef/secretKeyRef) и envFrom
+// (весь ConfigMap/Secret) — значения берутся из sources.
+func containerEnv(doc map[string]any, sources map[string]map[string]string) []envPair {
 	var envs []envPair
 	eachContainer(doc, func(c map[string]any) {
-		list, ok := c["env"].([]any)
-		if !ok {
-			return
-		}
-		for _, item := range list {
-			e, ok := item.(map[string]any)
-			if !ok {
-				continue
+		if list, ok := c["env"].([]any); ok {
+			for _, item := range list {
+				e, ok := item.(map[string]any)
+				if !ok {
+					continue
+				}
+				name := str(e["name"])
+				if v := str(e["value"]); v != "" {
+					envs = append(envs, envPair{name, v})
+					continue
+				}
+				if vf, ok := e["valueFrom"].(map[string]any); ok {
+					if v, ok := refValue(vf, "configMapKeyRef", sources); ok {
+						envs = append(envs, envPair{name, v})
+					} else if v, ok := refValue(vf, "secretKeyRef", sources); ok {
+						envs = append(envs, envPair{name, v})
+					}
+				}
 			}
-			if v := str(e["value"]); v != "" {
-				envs = append(envs, envPair{name: str(e["name"]), value: v})
+		}
+		// envFrom: подтягиваем все ключи ConfigMap/Secret целиком.
+		if list, ok := c["envFrom"].([]any); ok {
+			for _, item := range list {
+				m, ok := item.(map[string]any)
+				if !ok {
+					continue
+				}
+				for _, refKey := range []string{"configMapRef", "secretRef"} {
+					ref, ok := m[refKey].(map[string]any)
+					if !ok {
+						continue
+					}
+					data := sources[str(ref["name"])]
+					for _, k := range sortedKeys(data) {
+						envs = append(envs, envPair{k, data[k]})
+					}
+				}
 			}
 		}
 	})
 	return envs
+}
+
+// refValue достаёт значение из configMapKeyRef/secretKeyRef.
+func refValue(vf map[string]any, refKey string, sources map[string]map[string]string) (string, bool) {
+	ref, ok := vf[refKey].(map[string]any)
+	if !ok {
+		return "", false
+	}
+	data, ok := sources[str(ref["name"])]
+	if !ok {
+		return "", false
+	}
+	v, ok := data[str(ref["key"])]
+	return v, ok
 }
 
 // eachContainer вызывает fn для каждого контейнера/initконтейнера в документе,
@@ -383,6 +437,26 @@ func str(v any) string {
 		return s
 	}
 	return ""
+}
+
+// strMap приводит map[string]any к map[string]string (данные ConfigMap/Secret).
+func strMap(v any) map[string]string {
+	out := map[string]string{}
+	if m, ok := v.(map[string]any); ok {
+		for k, val := range m {
+			out[k] = fmt.Sprint(val)
+		}
+	}
+	return out
+}
+
+func sortedKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func firstQuoted(s string) string {

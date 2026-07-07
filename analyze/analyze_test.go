@@ -182,6 +182,36 @@ func TestBuildEntryNodeForPublishedPorts(t *testing.T) {
 	}
 }
 
+func TestBuildResolvesClusterFQDN(t *testing.T) {
+	yaml := `
+services:
+  app:
+    image: myapp
+    environment:
+      DB_URL: postgres://db.default.svc.cluster.local:5432/app
+      REDIS: redis.default.svc
+  db:
+    image: postgres:15
+  redis:
+    image: redis:7
+`
+	c, err := compose.Parse([]byte(yaml))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	g := Build(c, DefaultConfig())
+
+	if edge(g, "app", "db") == nil {
+		t.Fatalf("FQDN db.default.svc.cluster.local должен свернуться к своему db")
+	}
+	if edge(g, "app", "redis") == nil {
+		t.Fatalf("redis.default.svc должен свернуться к своему redis")
+	}
+	if node(g, "db.default.svc.cluster.local") != nil {
+		t.Fatalf("не должно быть фантомного внешнего узла для своего сервиса")
+	}
+}
+
 func TestBuildGroupsFromNetworks(t *testing.T) {
 	g := build(t)
 	got := map[string]int{}

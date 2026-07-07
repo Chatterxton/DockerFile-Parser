@@ -72,13 +72,17 @@ func Build(c *compose.Compose, cfg Config) *model.Graph {
 		}
 		for _, key := range sortedEnvKeys(svc.Environment) {
 			for _, host := range heuristic.ExtractHosts(svc.Environment[key]) {
-				if host == "" || host == name || ignore[host] {
+				if host == "" || ignore[host] {
 					continue
 				}
-				switch {
-				case known[host]:
-					g.AddEdge(name, host, model.EdgeNetwork, key)
-				case heuristic.IsExternalHost(host, cfg.ExternalPatterns):
+				// Сначала пробуем свернуть к своему сервису (в т.ч. k8s-FQDN).
+				if target, ok := heuristic.ResolveInternal(host, known); ok {
+					if target != name {
+						g.AddEdge(name, target, model.EdgeNetwork, key)
+					}
+					continue
+				}
+				if heuristic.IsExternalHost(host, cfg.ExternalPatterns) {
 					g.AddNode(model.Node{
 						ID: host, Label: host, Kind: model.KindExternal, External: true,
 					})

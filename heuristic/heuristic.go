@@ -60,6 +60,32 @@ func hostFromField(f string) string {
 	return f
 }
 
+// ResolveInternal сопоставляет хост со своим сервисом, понимая адреса
+// Kubernetes: service, service.namespace, service.namespace.svc,
+// service.ns.svc.cluster.local. Возвращает имя сервиса и true, если хост
+// указывает на свой сервис из known.
+//
+// Публичные домены не сворачиваются: "api.stripe.com" остаётся внешним, даже
+// если есть сервис "api" (остаток "stripe.com" многосоставной и не кластерный).
+func ResolveInternal(host string, known map[string]bool) (string, bool) {
+	if known[host] {
+		return host, true
+	}
+	first, rest, ok := strings.Cut(host, ".")
+	if !ok || !known[first] {
+		return "", false
+	}
+	// first — известный сервис; считаем внутренним, если остаток похож на
+	// namespace (одна метка) или на кластерный DNS-суффикс.
+	if !strings.Contains(rest, ".") ||
+		strings.HasSuffix(host, ".svc") ||
+		strings.HasSuffix(host, ".cluster.local") ||
+		strings.Contains(host, ".svc.") {
+		return first, true
+	}
+	return "", false
+}
+
 // IsExternalHost: хост внешний, если похож на доменное имя (есть точка) или
 // матчит один из настроенных glob-паттернов.
 func IsExternalHost(host string, patterns []string) bool {

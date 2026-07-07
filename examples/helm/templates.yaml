@@ -1,5 +1,16 @@
 # Шаблоны Helm-чарта (эквивалент склейки templates/*.yaml).
 # Вставьте в depgraph при формате «Helm-чарт»; release=myapp, chart=mychart.
+# Демонстрирует: динамические имена, k8s-FQDN, envFrom/ConfigMap, Ingress.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-config
+data:
+  # общие для api и worker настройки — подтягиваются через envFrom
+  BROKER_URL: amqp://{{ .Release.Name }}-rabbitmq:5672/
+  MAIL_HOST: smtp.sendgrid.net
+  LOG_LEVEL: info
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -11,13 +22,15 @@ spec:
       containers:
         - name: api
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          envFrom:
+            - configMapRef:
+                name: {{ .Release.Name }}-config
           env:
+            # обращение по полному DNS-имени сервиса внутри кластера
             - name: DATABASE_URL
-              value: postgres://{{ .Release.Name }}-postgres:5432/app
+              value: postgres://{{ .Release.Name }}-postgres.default.svc.cluster.local:5432/app
             - name: REDIS_HOST
               value: {{ .Release.Name }}-redis
-            - name: BROKER_URL
-              value: amqp://{{ .Release.Name }}-rabbitmq:5672/
             - name: PAYMENTS_URL
               value: {{ .Values.externalApi }}
 ---
@@ -31,11 +44,12 @@ spec:
       containers:
         - name: worker
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          envFrom:
+            - configMapRef:
+                name: {{ .Release.Name }}-config
           env:
             - name: DATABASE_URL
               value: postgres://{{ .Release.Name }}-postgres:5432/app
-            - name: BROKER_URL
-              value: amqp://{{ .Release.Name }}-rabbitmq:5672/
 ---
 apiVersion: v1
 kind: Service
