@@ -1,0 +1,10 @@
+.git
+.gitignore
+.claude
+.dockerignore
+Dockerfile
+docs
+examples
+README.md
+*.exe
+/depgraph

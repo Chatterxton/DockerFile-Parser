@@ -70,48 +70,38 @@ go build -o depgraph.exe ./cmd/depgraph   # один исполняемый фа
 
 ## Развёртывание на сервере
 
-Сервис — один самодостаточный бинарник без внешних зависимостей (`mermaid.js`
-вшит через `go:embed`), поэтому развёртывание сводится к «собрать → скопировать →
-запустить за обратным прокси».
+Сервис упакован в Docker-образ. Бинарник самодостаточный (`mermaid.js` вшит через
+`go:embed`, внешних зависимостей нет), поэтому образ получается крошечным:
+многоступенчатая сборка + distroless-база.
 
-### 1. Собрать бинарник под Linux
+### 1. Dockerfile
+
+В корне репозитория — [`Dockerfile`](Dockerfile):
+
+```dockerfile
+FROM golang:1.26 AS build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /depgraph ./cmd/depgraph
+
+FROM gcr.io/distroless/static-debian12
+COPY --from=build /depgraph /depgraph
+EXPOSE 8080
+ENTRYPOINT ["/depgraph"]
+```
+
+### 2. Сборка и запуск контейнера
 
 ```bash
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o depgraph ./cmd/depgraph
+docker build -t depgraph .
+docker run -d --name depgraph --restart unless-stopped \
+  -p 127.0.0.1:8080:8080 depgraph
 ```
 
-Скопировать на сервер, например в `/usr/local/bin/depgraph`.
-
-### 2. Запуск как systemd-сервис
-
-Сервис слушает только localhost — наружу его выставит nginx. Файл
-`/etc/systemd/system/depgraph.service`:
-
-```ini
-[Unit]
-Description=depgraph — визуализатор зависимостей сервисов
-After=network.target
-
-[Service]
-ExecStart=/usr/local/bin/depgraph -addr 127.0.0.1:8080
-Restart=on-failure
-RestartSec=2
-# запуск под одноразовым системным пользователем + базовый sandbox
-DynamicUser=yes
-NoNewPrivileges=yes
-ProtectSystem=strict
-ProtectHome=yes
-PrivateTmp=yes
-
-[Install]
-WantedBy=multi-user.target
-```
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable --now depgraph
-sudo systemctl status depgraph
-```
+Контейнер слушает `8080` и публикуется только на localhost — наружу его выставит
+nginx.
 
 ### 3. nginx как обратный прокси
 
