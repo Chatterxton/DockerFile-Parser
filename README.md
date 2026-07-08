@@ -68,6 +68,97 @@ go run ./cmd/depgraph -addr :9000
 go build -o depgraph.exe ./cmd/depgraph   # один исполняемый файл
 ```
 
+## Развёртывание на сервере
+
+Сервис — один самодостаточный бинарник без внешних зависимостей (`mermaid.js`
+вшит через `go:embed`), поэтому развёртывание сводится к «собрать → скопировать →
+запустить за обратным прокси».
+
+### 1. Собрать бинарник под Linux
+
+```bash
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o depgraph ./cmd/depgraph
+```
+
+Скопировать на сервер, например в `/usr/local/bin/depgraph`.
+
+### 2. Запуск как systemd-сервис
+
+Сервис слушает только localhost — наружу его выставит nginx. Файл
+`/etc/systemd/system/depgraph.service`:
+
+```ini
+[Unit]
+Description=depgraph — визуализатор зависимостей сервисов
+After=network.target
+
+[Service]
+ExecStart=/usr/local/bin/depgraph -addr 127.0.0.1:8080
+Restart=on-failure
+RestartSec=2
+# запуск под одноразовым системным пользователем + базовый sandbox
+DynamicUser=yes
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now depgraph
+sudo systemctl status depgraph
+```
+
+### 3. nginx как обратный прокси
+
+`/etc/nginx/sites-available/depgraph` (затем symlink в `sites-enabled/`):
+
+```nginx
+server {
+    listen 80;
+    listen [::]:80;
+    server_name depgraph.example.com;
+
+    # compose-файлы и Helm-чарты бывают большими — поднимаем лимит тела запроса
+    client_max_body_size 5m;
+
+    # статика (mermaid.js ~3 МБ) — отдаём с длинным кэшем
+    location /assets/ {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host $host;
+        expires 30d;
+        add_header Cache-Control "public, immutable";
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+```bash
+sudo ln -s /etc/nginx/sites-available/depgraph /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+### 4. HTTPS (по желанию)
+
+```bash
+sudo certbot --nginx -d depgraph.example.com
+```
+
+certbot сам добавит блок на `443` и редирект с `http`. После этого сервис доступен
+по `https://depgraph.example.com`.
+
 ## API
 
 `POST /api/graph`
