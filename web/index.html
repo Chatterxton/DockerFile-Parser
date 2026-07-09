@@ -1,144 +1,226 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>DockerFile-Parser — карта зависимостей сервисов</title>
-  <style>
-    :root {
-      --bg: #0f172a; --panel: #ffffff; --muted: #64748b; --line: #e2e8f0;
-      --accent: #2563eb; --accent-d: #1d4ed8; --err: #dc2626;
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-      color: #0f172a; background: #f1f5f9;
-    }
-    header {
-      background: var(--bg); color: #fff; padding: 14px 20px;
-      display: flex; align-items: baseline; gap: 12px;
-    }
-    header h1 { font-size: 18px; margin: 0; font-weight: 650; }
-    header .sub { color: #94a3b8; font-size: 13px; }
-    main { display: grid; grid-template-columns: 400px 1fr; gap: 16px; padding: 16px; }
-    @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
-    .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
-    .panel h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 10px; }
-    label { display: block; font-size: 12px; color: var(--muted); margin: 10px 0 4px; }
-    select, input[type=text] {
-      width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; font-size: 13px; background: #fff;
-    }
-    textarea {
-      width: 100%; padding: 10px; border: 1px solid var(--line); border-radius: 8px;
-      font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 12.5px; resize: vertical; tab-size: 2;
-    }
-    #yaml { height: 300px; }
-    #values { height: 120px; }
-    .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-    .two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-    button {
-      background: var(--accent); color: #fff; border: 0; border-radius: 8px; padding: 9px 14px;
-      font-size: 13px; font-weight: 600; cursor: pointer;
-    }
-    button:hover { background: var(--accent-d); }
-    button.ghost { background: #fff; color: var(--accent); border: 1px solid var(--line); }
-    button.ghost:hover { background: #f8fafc; }
-    #error { color: var(--err); font-size: 13px; margin-top: 10px; white-space: pre-wrap; display: none; }
-    .toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
-    .toolbar .grow { flex: 1; }
-    .toolbar label { margin: 0; }
-    .toolbar select { width: auto; min-width: 160px; }
-    #diagram { overflow: auto; min-height: 340px; display: flex; justify-content: center; align-items: flex-start; }
-    #diagram svg { max-width: 100%; height: auto; }
-    .legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 12px; color: var(--muted); margin-top: 10px; }
-    .legend span { display: inline-flex; align-items: center; gap: 6px; }
-    .swatch { width: 14px; height: 14px; border-radius: 3px; display: inline-block; border: 1px solid #0002; }
-    .hint { font-size: 12px; color: var(--muted); margin-top: 6px; }
-    .check { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: #0f172a; }
-    .check input { width: auto; }
-    #helmFields { display: none; }
-  </style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dockerfile-parser — карта зависимостей сервисов</title>
+<style>
+  :root{
+    --accent:#3a86e0; --bg:#0b0e14; --panel:#0e121a; --panel2:#0b0f16;
+    --line:#1a212d; --line2:#161d27; --input:#0a0f1a; --input-border:#223047;
+    --text:#e6eefb; --muted:#7d8ba3; --muted2:#63718a;
+    --mono:'IBM Plex Mono',ui-monospace,'Cascadia Code',Consolas,monospace;
+    --sans:'IBM Plex Sans',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;height:100%;background:var(--bg);font-family:var(--sans);color:var(--text)}
+  ::-webkit-scrollbar{width:10px;height:10px}
+  ::-webkit-scrollbar-track{background:transparent}
+  ::-webkit-scrollbar-thumb{background:#243247;border-radius:8px;border:2px solid #0b0f18}
+  ::-webkit-scrollbar-thumb:hover{background:#324564}
+  textarea,input,select{font-family:inherit}
+  @keyframes toastin{from{opacity:0;transform:translate(-50%,8px)}to{opacity:1;transform:translate(-50%,0)}}
+  @keyframes dashflow{to{stroke-dashoffset:-14}}
+
+  .app{display:flex;flex-direction:column;height:100vh;width:100vw;overflow:hidden}
+  header{display:flex;align-items:center;gap:13px;padding:0 22px;height:54px;flex-shrink:0;border-bottom:1px solid var(--line2);background:var(--bg)}
+  .logo{width:27px;height:27px;border-radius:7px;background:#12161f;border:1px solid #232c3b;display:flex;align-items:center;justify-content:center;color:var(--accent);font-family:var(--mono);font-size:15px;font-weight:600}
+  .brand{display:flex;flex-direction:column;line-height:1.25}
+  .brand b{font-weight:600;font-size:14px;letter-spacing:.2px}
+  .brand span{font-size:11px;color:#66707f;font-family:var(--mono)}
+
+  .body{flex:1;display:flex;min-height:0;padding:16px;gap:16px}
+  aside{width:352px;flex-shrink:0;display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  .cap{display:flex;align-items:center;gap:12px;padding:0 18px;height:44px;flex-shrink:0;border-bottom:1px solid var(--line2)}
+  .cap b{font-family:var(--mono);font-size:11px;font-weight:600;letter-spacing:2.5px;color:#7f8da3}
+  .cap .rule{flex:1;height:1px;background:var(--line2)}
+  .in-body{flex:1;overflow-y:auto;padding:16px 18px;display:flex;flex-direction:column;gap:15px}
+  label.f{display:flex;flex-direction:column;gap:6px}
+  label.f>span{font-size:11px;color:var(--muted);letter-spacing:.3px}
+  select,input[type=text],textarea{background:var(--input);border:1px solid var(--input-border);color:var(--text);border-radius:9px;padding:10px 12px;font-size:13px}
+  select{appearance:none;cursor:pointer;background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%237d8ba3'><path d='M6 8L1 3h10z'/></svg>");background-repeat:no-repeat;background-position:right 12px center}
+  textarea{resize:none;font-family:var(--mono);font-size:12px;line-height:1.6;tab-size:2;color:#cfe0f5;background:#080d16;border-color:#1d2940}
+  .two{display:flex;gap:10px}.two>*{flex:1}
+  #helm{display:none;flex-direction:column;gap:15px}
+  #ta{flex:1;min-height:200px}
+  .pick{display:flex;align-items:center;gap:10px}
+  .btn-file{display:inline-flex;align-items:center;gap:7px;background:#131c2b;border:1px solid #26334a;color:#c3d0e4;border-radius:9px;padding:9px 13px;font-size:12.5px;cursor:pointer;white-space:nowrap}
+  .btn-file:hover{border-color:#33456a}
+  .file-name{font-size:11.5px;color:var(--muted2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .build{display:flex;align-items:center;justify-content:center;gap:8px;background:var(--accent);border:none;color:#fff;border-radius:8px;padding:12px;font-size:13px;font-weight:600;letter-spacing:.2px;cursor:pointer}
+  .build:hover{filter:brightness(1.09)}
+  #err{color:#ff8189;font-size:12px;white-space:pre-wrap;display:none}
+  .mono{font-family:var(--mono)}
+
+  section.schema{flex:1;min-width:0;display:flex;flex-direction:column;background:var(--panel2);border:1px solid var(--line);border-radius:12px;overflow:hidden;position:relative}
+  .stoolbar{display:flex;align-items:center;gap:14px;padding:0 16px;min-height:44px;border-bottom:1px solid var(--line2);flex-wrap:wrap;z-index:3;background:var(--panel2)}
+  .stoolbar>b{font-family:var(--mono);font-size:11px;font-weight:600;letter-spacing:2.5px;color:#7f8da3}
+  .fctl{display:flex;align-items:center;gap:8px}
+  .fctl>span{font-size:11.5px;color:var(--muted)}
+  .fctl select{padding:7px 28px 7px 11px;font-size:12px;border-radius:8px;max-width:200px}
+  .chk{display:flex;align-items:center;gap:6px;font-size:12px;color:#a9b7cc;cursor:pointer;user-select:none}
+  .chk input{accent-color:var(--accent);width:14px;height:14px;cursor:pointer}
+  .grow{flex:1}
+  .exports{display:flex;gap:7px;flex-wrap:wrap}
+  .gbtn{background:#111a29;border:1px solid #26334a;color:#c3d0e4;border-radius:8px;padding:7px 11px;font-size:11.5px;cursor:pointer}
+  .gbtn:hover{border-color:#33456a;color:#e6eefb}
+  #vp{flex:1;position:relative;overflow:hidden;cursor:grab}
+  #vp.grabbing{cursor:grabbing}
+  #graph{display:block;width:100%;height:100%;touch-action:none}
+  .zoom{position:absolute;top:14px;right:14px;display:flex;flex-direction:column;gap:6px;z-index:4}
+  .zoom button{width:32px;height:32px;background:#0e1626e6;border:1px solid #26334a;color:#c3d0e4;border-radius:8px;font-size:16px;cursor:pointer;line-height:1}
+  .zoom button:hover{border-color:#33456a}
+  .empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none}
+  .empty span{font-family:var(--mono);font-size:13px;color:#3d4a60}
+  .legend{position:absolute;left:0;right:0;bottom:0;display:flex;align-items:center;gap:16px;padding:9px 16px;background:var(--panel2);border-top:1px solid var(--line2);flex-wrap:wrap;z-index:3}
+  .legend .it{display:flex;align-items:center;gap:6px;font-size:11.5px;color:#9fb0c8}
+  .sw{width:11px;height:11px;border-radius:4px}
+  .legend .hint{font-size:11.5px;color:var(--muted)}
+  .legend .sep{width:1px;height:14px;background:#22304a}
+  .stat{font-family:var(--mono);font-size:11.5px;color:var(--muted2)}
+  .stat b{color:#cfe0f5;font-weight:600}
+  .toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);background:#111c2e;border:1px solid #2b3a54;color:#dbe6f5;padding:11px 18px;border-radius:10px;font-size:12.5px;box-shadow:0 14px 40px -14px #000;animation:toastin .2s ease;z-index:50;display:none}
+  @media(max-width:900px){.body{flex-direction:column}aside{width:auto}section.schema{min-height:460px}#ta{min-height:140px}}
+</style>
 </head>
 <body>
+<div class="app">
   <header>
-    <h1>DockerFile-Parser</h1>
-    <span class="sub">карта зависимостей сервисов из docker-compose и Helm</span>
+    <div class="logo">{ }</div>
+    <div class="brand">
+      <b>dockerfile-parser</b>
+      <span>карта зависимостей сервисов · docker-compose / helm</span>
+    </div>
   </header>
 
-  <main>
-    <section class="panel">
-      <h2>Вход</h2>
-      <label for="format">Формат</label>
-      <select id="format">
-        <option value="compose">docker-compose</option>
-        <option value="helm">Helm-чарт</option>
-      </select>
+  <div class="body">
+    <!-- INPUT -->
+    <aside>
+      <div class="cap"><b>ВХОД</b><span class="rule"></span></div>
+      <div class="in-body">
+        <label class="f">
+          <span>Формат</span>
+          <select id="format">
+            <option value="compose">docker-compose</option>
+            <option value="helm">Helm-чарт</option>
+          </select>
+        </label>
 
-      <div id="helmFields">
-        <div class="two">
-          <div>
-            <label for="release">Имя релиза</label>
-            <input type="text" id="release" value="myapp">
+        <div id="helm">
+          <div class="two">
+            <label class="f"><span>Имя релиза</span><input type="text" id="release" value="myapp"></label>
+            <label class="f"><span>Имя чарта</span><input type="text" id="chart" value="mychart"></label>
           </div>
-          <div>
-            <label for="chartName">Имя чарта</label>
-            <input type="text" id="chartName" value="mychart">
-          </div>
+          <label class="f"><span>values.yaml</span><textarea id="values" spellcheck="false" style="min-height:96px"></textarea></label>
         </div>
-        <label for="values">values.yaml</label>
-        <textarea id="values" spellcheck="false"></textarea>
+
+        <label class="f">
+          <span>Загрузить файл</span>
+          <div class="pick">
+            <button type="button" class="btn-file" id="pick">↥ Выберите файл</button>
+            <span class="file-name" id="fname">файл не выбран</span>
+            <input type="file" id="file" accept=".yml,.yaml,.tpl" style="display:none">
+          </div>
+        </label>
+
+        <label class="f" id="ta">
+          <span id="taLabel">или вставьте docker-compose.yaml</span>
+          <textarea id="text" spellcheck="false" style="flex:1"></textarea>
+        </label>
+
+        <label class="f">
+          <span>Паттерны внешних сервисов (через запятую)</span>
+          <input type="text" id="patterns" class="mono" placeholder="*.rds.amazonaws.com, *.internal">
+        </label>
+
+        <button class="build" id="build"><span>Построить схему</span><span class="mono">→</span></button>
+        <div id="err"></div>
+      </div>
+    </aside>
+
+    <!-- SCHEMA -->
+    <section class="schema">
+      <div class="stoolbar">
+        <b>СХЕМА</b>
+        <div class="fctl">
+          <span>Фокус</span>
+          <select id="focus"><option value="all">— весь граф —</option></select>
+          <label class="chk"><input type="checkbox" id="neighbors"> только соседи</label>
+        </div>
+        <div class="grow"></div>
+        <div class="exports">
+          <button class="gbtn" id="expMermaid">Копировать Mermaid</button>
+          <button class="gbtn" id="expSvg">SVG</button>
+          <button class="gbtn" id="expPng">PNG</button>
+          <button class="gbtn" id="expDot">.dot</button>
+        </div>
       </div>
 
-      <label for="file">Загрузить файл</label>
-      <input type="file" id="file" accept=".yml,.yaml,.tpl">
+      <div id="vp">
+        <svg id="graph" preserveAspectRatio="xMidYMid meet">
+          <defs>
+            <pattern id="dotgrid" width="26" height="26" patternUnits="userSpaceOnUse">
+              <circle cx="1.5" cy="1.5" r="1.2" fill="#1a2334"></circle>
+            </pattern>
+            <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,1 L9,5 L0,9 z" fill="#5c6f8c"></path></marker>
+            <marker id="arrowhi" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0,1 L9,5 L0,9 z" fill="#3a86e0"></path></marker>
+            <filter id="nodeshadow" x="-40%" y="-40%" width="180%" height="180%"><feDropShadow dx="0" dy="6" stdDeviation="8" flood-color="#000" flood-opacity="0.4"></feDropShadow></filter>
+          </defs>
+          <rect id="grid" fill="url(#dotgrid)"></rect>
+          <g id="scene"></g>
+        </svg>
 
-      <label for="yaml" id="yamlLabel">или вставьте docker-compose.yaml</label>
-      <textarea id="yaml" spellcheck="false"></textarea>
+        <div class="empty" id="empty"><span>// нет данных — вставьте конфиг и нажмите «Построить схему»</span></div>
 
-      <label for="patterns">Паттерны внешних сервисов (через запятую)</label>
-      <input type="text" id="patterns" placeholder="*.rds.amazonaws.com, *.internal">
+        <div class="zoom">
+          <button id="zin" title="Приблизить">+</button>
+          <button id="zout" title="Отдалить">−</button>
+          <button id="zfit" title="Вписать">⤢</button>
+        </div>
 
-      <div class="row" style="margin-top:12px;">
-        <button id="build">Построить схему</button>
+        <div class="legend">
+          <div class="it"><span class="sw" style="background:#0e2a45;border:1.5px solid #2f88e0"></span>сервис</div>
+          <div class="it"><span class="sw" style="background:#1e1738;border:1.5px solid #8b6ef0"></span>база / хранилище</div>
+          <div class="it"><span class="sw" style="background:#33260f;border:1.5px solid #e0a53a"></span>внешний</div>
+          <div class="it"><span class="sw" style="background:#0d2b23;border:1.5px solid #2fbf8f"></span>точка входа</div>
+          <div class="sep"></div>
+          <span class="hint"><span style="color:#9fb0c8">→</span> сплошная — сетевая связь</span>
+          <span class="hint"><span style="color:#9fb0c8">⇢</span> пунктир — depends_on / link</span>
+          <div class="grow"></div>
+          <span class="stat">узлов: <b id="nc">0</b> · связей: <b id="ec">0</b></span>
+        </div>
       </div>
-      <div id="error"></div>
     </section>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
 
-    <section class="panel">
-      <h2>Схема</h2>
-      <div class="toolbar">
-        <label for="focus">Фокус:</label>
-        <select id="focus"><option value="">— весь граф —</option></select>
-        <label class="check"><input type="checkbox" id="neighbors"> только соседи</label>
-        <span class="grow"></span>
-        <button class="ghost" id="copyMermaid">Копировать Mermaid</button>
-        <button class="ghost" id="downloadSvg">Скачать SVG</button>
-        <button class="ghost" id="downloadPng">Скачать PNG</button>
-        <button class="ghost" id="downloadDot">Скачать .dot</button>
-      </div>
-      <div id="diagram"></div>
-      <div class="legend">
-        <span><span class="swatch" style="background:#fff"></span> сервис</span>
-        <span><span class="swatch" style="background:#e0e7ff"></span> база/хранилище</span>
-        <span><span class="swatch" style="background:#fef3c7"></span> внешний</span>
-        <span><span class="swatch" style="background:#dcfce7"></span> 🌐 точка входа</span>
-        <span>→ сплошная — сетевая связь · ⇢ пунктир — depends_on/link</span>
-      </div>
-      <div class="hint" id="hint"></div>
-    </section>
-  </main>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const ACCENT = '#3a86e0';
+const MONO = "'IBM Plex Mono',ui-monospace,'Cascadia Code',Consolas,monospace";
+const SANS = "'IBM Plex Sans',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif";
+const TYPE = {
+  service:  {fill:'#0e2a45', stroke:'#2f88e0', accent:'#4aa6f0', iconbg:'#0a1f38'},
+  db:       {fill:'#1e1738', stroke:'#8b6ef0', accent:'#a78bfa', iconbg:'#191233'},
+  external: {fill:'#33260f', stroke:'#e0a53a', accent:'#f5b544', iconbg:'#2a1f0c'},
+  entry:    {fill:'#0d2b23', stroke:'#2fbf8f', accent:'#3ad9a5', iconbg:'#0a241d'},
+};
+const KIND2TYPE = {service:'service', database:'db', external:'external', entry:'entry'};
 
-  <script src="/assets/mermaid.min.js"></script>
-  <script>
-    mermaid.initialize({
-      startOnLoad: false, securityLevel: 'loose', theme: 'default',
-      flowchart: { curve: 'basis', htmlLabels: false }, // htmlLabels:false → чистый SVG-текст, надёжный экспорт в PNG
-    });
+const state = {
+  graph:{nodes:[],edges:[],clusters:[]},
+  mermaid:'', dot:'',
+  focus:'all', neighbors:false,
+  view:{tx:60,ty:60,scale:1}, vw:900, vh:560,
+  built:false, userMoved:false,
+};
 
-    const $ = (id) => document.getElementById(id);
-    let last = { mermaid: '', dot: '', graph: null };
+const esc = (s) => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 
-    const COMPOSE_SAMPLE = `services:
+/* ---------- samples ---------- */
+const COMPOSE_SAMPLE = `services:
   web:
     image: nginx:alpine
     ports: ["80:80"]
@@ -157,20 +239,18 @@
       - PAYMENTS_URL=https://api.stripe.com
     networks: [frontend, backend]
   db:
-    image: postgres:15
+    image: postgres:16
     networks: [backend]
   redis:
     image: redis:7
     networks: [backend]
 `;
-
-    const HELM_TEMPLATES = `apiVersion: v1
+const HELM_TEMPLATES = `apiVersion: v1
 kind: ConfigMap
 metadata:
   name: {{ .Release.Name }}-config
 data:
   MAIL_HOST: smtp.sendgrid.net
-  LOG_LEVEL: info
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -190,190 +270,323 @@ spec:
               value: postgres://{{ .Release.Name }}-postgres.default.svc.cluster.local:5432/app
             - name: REDIS_HOST
               value: {{ .Release.Name }}-redis
-            - name: PAYMENTS_URL
-              value: {{ .Values.externalApi }}
 ---
 apiVersion: v1
 kind: Service
-metadata:
-  name: {{ .Release.Name }}-api
+metadata: { name: {{ .Release.Name }}-api }
 ---
 apiVersion: v1
 kind: Service
-metadata:
-  name: {{ .Release.Name }}-postgres
+metadata: { name: {{ .Release.Name }}-postgres }
 ---
 apiVersion: v1
 kind: Service
-metadata:
-  name: {{ .Release.Name }}-redis
+metadata: { name: {{ .Release.Name }}-redis }
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
-metadata:
-  name: {{ .Release.Name }}-ingress
+metadata: { name: {{ .Release.Name }}-ing }
 spec:
   rules:
     - http:
         paths:
           - path: /
-            backend:
-              service:
-                name: {{ .Release.Name }}-api
+            backend: { service: { name: {{ .Release.Name }}-api } }
 `;
-
-    const HELM_VALUES = `image:
+const HELM_VALUES = `image:
   repository: myorg/api
-  tag: "1.2.3"
-externalApi: https://api.stripe.com
+  tag: "1.4.0"
 `;
 
-    // Начальное состояние — compose.
-    $('yaml').value = COMPOSE_SAMPLE;
-    $('values').value = HELM_VALUES;
+/* ---------- adapt server graph -> render model ---------- */
+function adapt(g){
+  const nodes = (g.nodes||[]).map(n => ({
+    id:n.id, label:n.label||n.id,
+    type: KIND2TYPE[n.kind] || 'service',
+    ports: n.ports||[], image:n.image||'', external:!!n.external,
+  }));
+  const edges = (g.edges||[]).map(e => ({
+    s:e.from, t:e.to,
+    label:e.detail||'',
+    dashed: !(e.types||[]).includes('network'),   // сетевая → сплошная, иначе пунктир
+  }));
+  const clusters = (g.groups||[]).map(gr => ({name:gr.name, members:gr.nodes||[]}));
+  return {nodes, edges, clusters};
+}
 
-    function applyFormat() {
-      const helm = $('format').value === 'helm';
-      $('helmFields').style.display = helm ? 'block' : 'none';
-      $('yamlLabel').textContent = helm
-        ? 'шаблоны Helm (templates/*.yaml, через ---)'
-        : 'или вставьте docker-compose.yaml';
-      // Подставляем пример, только если поле не трогали (равно другому примеру).
-      if (helm && $('yaml').value.trim() === COMPOSE_SAMPLE.trim()) {
-        $('yaml').value = HELM_TEMPLATES;
-      } else if (!helm && $('yaml').value.trim() === HELM_TEMPLATES.trim()) {
-        $('yaml').value = COMPOSE_SAMPLE;
-      }
-    }
-
-    $('file').addEventListener('change', (e) => {
-      const f = e.target.files[0];
-      if (!f) return;
-      const r = new FileReader();
-      r.onload = () => { $('yaml').value = r.result; build(); };
-      r.readAsText(f);
+/* ---------- layout (layered, barycenter) ---------- */
+function layout(g){
+  const W=148,H=60,COLGAP=104,ROWGAP=40,COLW=W+COLGAP,ROWH=H+ROWGAP;
+  const nodes=g.nodes.map(n=>({...n,w:W,h:H}));
+  const byId={}; nodes.forEach(n=>byId[n.id]=n);
+  const fwd={}, pred={}; nodes.forEach(n=>{fwd[n.id]=[];pred[n.id]=[];});
+  g.edges.forEach(e=>{ if(byId[e.s]&&byId[e.t]){ fwd[e.s].push(e.t); pred[e.t].push(e.s); } });
+  const layer={}; nodes.forEach(n=>layer[n.id]=0);
+  for(let it=0;it<nodes.length+2;it++){ let ch=false;
+    g.edges.forEach(e=>{ if(byId[e.s]&&byId[e.t]&&layer[e.t]<layer[e.s]+1){layer[e.t]=layer[e.s]+1;ch=true;} });
+    if(!ch) break;
+  }
+  const cols={}; nodes.forEach(n=>{ (cols[layer[n.id]]=cols[layer[n.id]]||[]).push(n.id); });
+  const colKeys=Object.keys(cols).map(Number).sort((a,b)=>a-b);
+  const pos={}; colKeys.forEach(l=>cols[l].forEach((id,i)=>pos[id]=i));
+  for(let sweep=0;sweep<6;sweep++){
+    const forward=sweep%2===0;
+    const order=forward?colKeys:[...colKeys].reverse();
+    order.forEach(l=>{
+      cols[l].sort((a,b)=>{
+        const na=forward?pred[a]:fwd[a], nb=forward?pred[b]:fwd[b];
+        const ba=na.length?na.reduce((s,x)=>s+(pos[x]||0),0)/na.length:pos[a];
+        const bb=nb.length?nb.reduce((s,x)=>s+(pos[x]||0),0)/nb.length:pos[b];
+        return ba-bb;
+      });
+      cols[l].forEach((id,i)=>pos[id]=i);
     });
+  }
+  colKeys.forEach(l=>{
+    const arr=cols[l]; const off=-(arr.length-1)*ROWH/2;
+    arr.forEach((id,i)=>{ byId[id].x=l*COLW; byId[id].y=off+i*ROWH; });
+  });
+  const hues=['#3f6ea8','#6b5aa8','#4a8f7a','#a87f4a'];
+  const clusters=g.clusters.map((c,ci)=>{
+    const ms=c.members.map(m=>byId[m]).filter(Boolean); if(!ms.length) return null;
+    const pad=22;
+    const x=Math.min(...ms.map(n=>n.x))-pad, y=Math.min(...ms.map(n=>n.y))-pad-14;
+    const x2=Math.max(...ms.map(n=>n.x+n.w))+pad, y2=Math.max(...ms.map(n=>n.y+n.h))+pad;
+    const col=hues[ci%hues.length];
+    const label=(c.name||'').toUpperCase();
+    return {name:c.name,x,y,w:x2-x,h:y2-y,col,label,tagW:label.length*7.4+30};
+  }).filter(Boolean);
+  return {nodes,edges:g.edges,clusters,byId};
+}
 
-    function showError(msg) {
-      const el = $('error');
-      el.textContent = msg;
-      el.style.display = msg ? 'block' : 'none';
+/* ---------- focus ---------- */
+function neighborhood(){
+  const {focus,graph}=state;
+  if(focus==='all') return null;
+  const keep=new Set([focus]);
+  graph.edges.forEach(e=>{ if(e.s===focus)keep.add(e.t); if(e.t===focus)keep.add(e.s); });
+  return keep;
+}
+
+/* ---------- render ---------- */
+function nodeSub(n){
+  if(n.type==='entry') return 'точка входа';
+  if(n.ports&&n.ports.length) return ':'+n.ports.map(p=>String(p).split(':')[0]).join(' :');
+  if(n.type==='db') return 'storage';
+  if(n.type==='external') return 'external';
+  if(n.image) return String(n.image).split(':')[0].split('/').pop().slice(0,16);
+  return 'build';
+}
+function initialOf(n){
+  if(n.type==='entry') return '⦿';
+  const m=(n.label||'').replace(/[^a-z0-9]/gi,'');
+  return m ? m.charAt(0).toUpperCase() : '•';
+}
+function renderScene(){
+  const g=state.graph;
+  const keep=neighborhood();
+  const dimOp = state.neighbors ? 0 : 0.18;
+  const byId=g.byId||{};
+  const parts=[];
+
+  // clusters
+  for(const c of g.clusters||[]){
+    parts.push(
+      `<g>`+
+      `<rect x="${c.x}" y="${c.y}" width="${c.w}" height="${c.h}" rx="18" fill="${c.col}12" stroke="${c.col}55" stroke-width="1.5" stroke-dasharray="2 6"></rect>`+
+      `<rect x="${c.x+14}" y="${c.y-11}" width="${c.tagW}" height="22" rx="6" fill="#0b0f16" stroke="${c.col}55" stroke-width="1"></rect>`+
+      `<circle cx="${c.x+26}" cy="${c.y}" r="3" fill="${c.col}"></circle>`+
+      `<text x="${c.x+36}" y="${c.y+4}" font-family="${MONO}" font-size="12" font-weight="600" fill="${c.col}" letter-spacing="1">${esc(c.label)}</text>`+
+      `</g>`
+    );
+  }
+  // edges
+  for(const e of g.edges){
+    const s=byId[e.s], t=byId[e.t]; if(!s||!t) continue;
+    const x1=s.x+s.w, y1=s.y+s.h/2, x2=t.x, y2=t.y+t.h/2;
+    const dx=Math.max(50,(x2-x1)*0.5);
+    const d=`M${x1},${y1} C${x1+dx},${y1} ${x2-dx},${y2} ${x2},${y2}`;
+    const mx=0.125*x1+0.375*(x1+dx)+0.375*(x2-dx)+0.125*x2, my=(y1+y2)/2;
+    const active = state.focus!=='all' && (e.s===state.focus||e.t===state.focus);
+    let op=1;
+    if(state.focus!=='all' && !active && !(keep&&keep.has(e.s)&&keep.has(e.t))) op=state.neighbors?0:0.12;
+    if(op===0) continue;
+    const stroke=active?ACCENT:(e.dashed?'#4a5a73':'#54687f');
+    const anim=e.dashed?'style="animation:dashflow 1s linear infinite"':'';
+    let g2=`<g opacity="${op}"><path d="${d}" fill="none" stroke="${stroke}" stroke-width="${active?2.2:1.6}" stroke-dasharray="${e.dashed?'5 5':'0'}" marker-end="url(#${active?'arrowhi':'arrow'})" ${anim}></path>`;
+    if(e.label){
+      const lw=Math.max(22,e.label.length*6.6+10);
+      g2+=`<rect x="${mx-lw/2}" y="${my-9}" width="${lw}" height="18" rx="6" fill="#0b1220" stroke="${active?ACCENT+'88':'#22314a'}" stroke-width="1"></rect>`+
+          `<text x="${mx}" y="${my+3.5}" text-anchor="middle" font-family="${MONO}" font-size="11" fill="${active?ACCENT:'#93a4bd'}">${esc(e.label)}</text>`;
     }
-
-    async function build() {
-      showError('');
-      const patterns = $('patterns').value.split(',').map(s => s.trim()).filter(Boolean);
-      const body = {
-        yaml: $('yaml').value,
-        format: $('format').value,
-        values: $('values').value,
-        release: $('release').value,
-        chartName: $('chartName').value,
-        externalPatterns: patterns,
-        focus: $('focus').value,
-        neighborsOnly: $('neighbors').checked,
-      };
-      let resp;
-      try {
-        resp = await fetch('/api/graph', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-        });
-      } catch (err) { showError('Сеть недоступна: ' + err); return; }
-
-      const data = await resp.json();
-      if (!resp.ok || data.error) { showError(data.error || ('HTTP ' + resp.status)); return; }
-
-      last = data;
-      populateFocus(data.graph);
-      await renderDiagram(data.mermaid);
-      $('hint').textContent =
-        `Узлов: ${data.graph.nodes.length} · связей: ${data.graph.edges.length}`;
+    parts.push(g2+`</g>`);
+  }
+  // nodes
+  for(const n of g.nodes){
+    const ty=TYPE[n.type]||TYPE.service;
+    let dim=false;
+    if(state.focus!=='all'){
+      const adj = state.graph.edges.some(e=>(e.s===state.focus&&e.t===n.id)||(e.t===state.focus&&e.s===n.id));
+      dim = keep ? !keep.has(n.id) : (state.focus!==n.id && !adj);
     }
+    const op = dim ? dimOp : 1;
+    if(op===0) continue;
+    const focused = state.focus===n.id;
+    const label = n.label.length>18 ? n.label.slice(0,17)+'…' : n.label;
+    parts.push(
+      `<g transform="translate(${n.x} ${n.y})" opacity="${op}" data-id="${esc(n.id)}" style="cursor:pointer">`+
+      `<rect width="${n.w}" height="${n.h}" rx="12" fill="${ty.fill}" stroke="${focused?ACCENT:ty.stroke}" stroke-width="${focused?2.4:1.4}" filter="url(#nodeshadow)"></rect>`+
+      `<circle cx="26" cy="${n.h/2}" r="14" fill="${ty.iconbg}"></circle>`+
+      `<text x="26" y="${n.h/2+4.5}" text-anchor="middle" font-family="${MONO}" font-size="13" font-weight="700" fill="${ty.accent}">${esc(initialOf(n))}</text>`+
+      `<text x="50" y="${n.h/2-3}" font-family="${SANS}" font-size="13.5" font-weight="600" fill="#eef4fd">${esc(label)}</text>`+
+      `<text x="50" y="${n.h/2+13}" font-family="${MONO}" font-size="10" fill="${ty.accent}" letter-spacing="0.4">${esc(nodeSub(n))}</text>`+
+      `</g>`
+    );
+  }
+  $('scene').innerHTML = parts.join('');
+  $('nc').textContent = g.nodes.length;
+  $('ec').textContent = g.edges.length;
+  $('empty').style.display = (state.built && g.nodes.length===0) ? 'flex' : 'none';
+}
 
-    function populateFocus(graph) {
-      const sel = $('focus');
-      const cur = sel.value;
-      const own = graph.nodes.filter(n => !n.external).map(n => n.id).sort();
-      sel.innerHTML = '<option value="">— весь граф —</option>' +
-        own.map(id => `<option value="${id}">${id}</option>`).join('');
-      if (own.includes(cur)) sel.value = cur;
-    }
+/* ---------- view (pan/zoom via viewBox) ---------- */
+function applyView(){
+  const {tx,ty,scale,vw,vh}=Object.assign({},state.view,{vw:state.vw,vh:state.vh});
+  const x=-state.view.tx/state.view.scale, y=-state.view.ty/state.view.scale;
+  const w=state.vw/state.view.scale, h=state.vh/state.view.scale;
+  $('graph').setAttribute('viewBox', `${x} ${y} ${w} ${h}`);
+  const grid=$('grid'); grid.setAttribute('x',x); grid.setAttribute('y',y); grid.setAttribute('width',w); grid.setAttribute('height',h);
+}
+function measure(){
+  const r=$('vp').getBoundingClientRect();
+  if(r.width){ state.vw=r.width; state.vh=r.height; applyView(); }
+}
+function fit(){
+  const ns=state.graph.nodes; if(!ns.length){ applyView(); return; }
+  const minX=Math.min(...ns.map(n=>n.x)), minY=Math.min(...ns.map(n=>n.y));
+  const maxX=Math.max(...ns.map(n=>n.x+n.w)), maxY=Math.max(...ns.map(n=>n.y+n.h));
+  const w=maxX-minX, h=maxY-minY, pad=70;
+  const scale=Math.max(.25,Math.min(1.4,Math.min((state.vw-pad*2)/w,(state.vh-pad*2)/h)));
+  state.view={tx:(state.vw-w*scale)/2-minX*scale, ty:(state.vh-h*scale)/2-minY*scale, scale};
+  applyView();
+}
+function zoomBy(f){
+  state.userMoved=true;
+  const cx=state.vw/2, cy=state.vh/2, v=state.view;
+  const ns=Math.max(.2,Math.min(3,v.scale*f));
+  const wx=(cx-v.tx)/v.scale, wy=(cy-v.ty)/v.scale;
+  state.view={tx:cx-wx*ns, ty:cy-wy*ns, scale:ns}; applyView();
+}
+function attachPan(){
+  const vp=$('vp'); let drag=false,sx=0,sy=0,st=null,moved=false;
+  vp.addEventListener('wheel',(e)=>{
+    e.preventDefault(); state.userMoved=true;
+    const v=state.view, r=vp.getBoundingClientRect(), px=e.clientX-r.left, py=e.clientY-r.top;
+    const ns=Math.max(.2,Math.min(3,v.scale*(1-e.deltaY*0.0016)));
+    const wx=(px-v.tx)/v.scale, wy=(py-v.ty)/v.scale;
+    state.view={tx:px-wx*ns, ty:py-wy*ns, scale:ns}; applyView();
+  },{passive:false});
+  vp.addEventListener('pointerdown',(e)=>{ drag=true;moved=false;sx=e.clientX;sy=e.clientY;st={...state.view};vp.classList.add('grabbing');vp.setPointerCapture(e.pointerId); });
+  vp.addEventListener('pointermove',(e)=>{ if(!drag)return; if(Math.abs(e.clientX-sx)+Math.abs(e.clientY-sy)>4)moved=true; state.userMoved=true; state.view={tx:st.tx+(e.clientX-sx),ty:st.ty+(e.clientY-sy),scale:st.scale}; applyView(); });
+  const end=()=>{drag=false;vp.classList.remove('grabbing');};
+  vp.addEventListener('pointerup',(e)=>{ if(!moved){ const g=e.target.closest('[data-id]'); if(g){ const id=g.getAttribute('data-id'); setFocus(state.focus===id?'all':id); } } end(); });
+  vp.addEventListener('pointercancel',end);
+}
 
-    async function renderDiagram(code) {
-      if (!code.trim()) { $('diagram').innerHTML = '<p style="color:#94a3b8">Схема пуста — узлов не найдено.</p>'; return; }
-      try {
-        const { svg } = await mermaid.render('theGraph', code);
-        $('diagram').innerHTML = svg;
-      } catch (err) {
-        showError('Не удалось нарисовать схему: ' + err.message);
-      }
-    }
+/* ---------- focus controls ---------- */
+function setFocus(id){
+  state.focus=id;
+  $('focus').value = state.graph.nodes.some(n=>n.id===id)?id:'all';
+  renderScene();
+}
+function populateFocus(){
+  const sel=$('focus'); const cur=sel.value;
+  const opts=state.graph.nodes.filter(n=>n.type!=='entry').map(n=>`<option value="${esc(n.id)}">${esc(n.label)}</option>`).join('');
+  sel.innerHTML='<option value="all">— весь граф —</option>'+opts;
+  sel.value = state.graph.nodes.some(n=>n.id===cur)?cur:'all';
+}
 
-    $('build').addEventListener('click', build);
-    $('format').addEventListener('change', () => { applyFormat(); build(); });
-    $('focus').addEventListener('change', build);
-    $('neighbors').addEventListener('change', build);
-    function downloadBlob(blob, filename) {
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = filename;
-      a.click();
-      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-    }
+/* ---------- build (server-side parsing) ---------- */
+function showErr(m){ const e=$('err'); e.textContent=m||''; e.style.display=m?'block':'none'; }
+async function build(){
+  showErr('');
+  const patterns=$('patterns').value.split(',').map(s=>s.trim()).filter(Boolean);
+  const body={ yaml:$('text').value, format:$('format').value, values:$('values').value,
+    release:$('release').value, chartName:$('chart').value, externalPatterns:patterns };
+  let resp;
+  try{ resp=await fetch('/api/graph',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); }
+  catch(err){ showErr('Сеть недоступна: '+err); return; }
+  const data=await resp.json();
+  if(!resp.ok||data.error){ showErr(data.error||('HTTP '+resp.status)); return; }
 
-    function currentSVG() {
-      return document.querySelector('#diagram svg');
-    }
+  state.mermaid=data.mermaid||''; state.dot=data.dot||'';
+  state.graph=layout(adapt(data.graph||{nodes:[],edges:[],groups:[]}));
+  state.focus='all'; state.built=true; state.userMoved=false;
+  populateFocus();
+  renderScene();
+  fit();
+}
 
-    function svgSize(svg) {
-      if (svg.viewBox && svg.viewBox.baseVal && svg.viewBox.baseVal.width) {
-        return { w: svg.viewBox.baseVal.width, h: svg.viewBox.baseVal.height };
-      }
-      const r = svg.getBoundingClientRect();
-      return { w: r.width, h: r.height };
-    }
+/* ---------- exports ---------- */
+function toast(m){ const t=$('toast'); t.textContent=m; t.style.display='block'; clearTimeout(toast._t); toast._t=setTimeout(()=>t.style.display='none',2200); }
+function download(name,content,mime){ const b=new Blob([content],{type:mime}); const u=URL.createObjectURL(b); const a=document.createElement('a'); a.href=u; a.download=name; a.click(); setTimeout(()=>URL.revokeObjectURL(u),1500); }
+function bounds(){ const ns=state.graph.nodes; if(!ns.length) return null;
+  const minX=Math.min(...ns.map(n=>n.x)),minY=Math.min(...ns.map(n=>n.y));
+  const maxX=Math.max(...ns.map(n=>n.x+n.w)),maxY=Math.max(...ns.map(n=>n.y+n.h)); const pad=60;
+  return {x:minX-pad,y:minY-pad,w:maxX-minX+pad*2,h:maxY-minY+pad*2}; }
+function exportSvg(){
+  const b=bounds(); if(!b) return null;
+  const clone=$('graph').cloneNode(true);
+  clone.setAttribute('width',b.w); clone.setAttribute('height',b.h);
+  clone.setAttribute('viewBox',`${b.x} ${b.y} ${b.w} ${b.h}`);
+  clone.setAttribute('xmlns','http://www.w3.org/2000/svg');
+  const grid=clone.querySelector('#grid'); if(grid){grid.setAttribute('x',b.x);grid.setAttribute('y',b.y);grid.setAttribute('width',b.w);grid.setAttribute('height',b.h);}
+  const bgr=document.createElementNS('http://www.w3.org/2000/svg','rect');
+  bgr.setAttribute('x',b.x);bgr.setAttribute('y',b.y);bgr.setAttribute('width',b.w);bgr.setAttribute('height',b.h);bgr.setAttribute('fill','#0b0f16');
+  clone.insertBefore(bgr,clone.firstChild);
+  return {xml:new XMLSerializer().serializeToString(clone),w:b.w,h:b.h};
+}
+function downloadSvg(){ const r=exportSvg(); if(!r){toast('Пустой граф');return;} download('schema.svg','<?xml version="1.0" encoding="UTF-8"?>\n'+r.xml,'image/svg+xml'); toast('SVG сохранён'); }
+function downloadPng(){
+  const r=exportSvg(); if(!r){toast('Пустой граф');return;}
+  const scale=2, img=new Image();
+  img.onload=()=>{ const c=document.createElement('canvas'); c.width=Math.ceil(r.w*scale); c.height=Math.ceil(r.h*scale);
+    const ctx=c.getContext('2d'); ctx.scale(scale,scale); ctx.drawImage(img,0,0);
+    c.toBlob(bl=>{ download('schema.png',bl,'image/png'); toast('PNG сохранён'); },'image/png'); };
+  img.onerror=()=>toast('Не удалось отрисовать PNG');
+  img.src='data:image/svg+xml;charset=utf-8,'+encodeURIComponent(r.xml);
+}
 
-    function downloadSVG() {
-      const svg = currentSVG();
-      if (!svg) { showError('Сначала постройте схему'); return; }
-      const data = new XMLSerializer().serializeToString(svg);
-      downloadBlob(new Blob([data], { type: 'image/svg+xml;charset=utf-8' }), 'dependencies.svg');
-    }
+/* ---------- format switch (swap sample) ---------- */
+function applyFormat(){
+  const helm=$('format').value==='helm';
+  $('helm').style.display=helm?'flex':'none';
+  $('taLabel').textContent=helm?'шаблоны Helm (templates/*.yaml, через ---)':'или вставьте docker-compose.yaml';
+  if(helm && $('text').value.trim()===COMPOSE_SAMPLE.trim()) $('text').value=HELM_TEMPLATES;
+  else if(!helm && $('text').value.trim()===HELM_TEMPLATES.trim()) $('text').value=COMPOSE_SAMPLE;
+}
 
-    function downloadPNG() {
-      const svg = currentSVG();
-      if (!svg) { showError('Сначала постройте схему'); return; }
-      const { w, h } = svgSize(svg);
-      const data = new XMLSerializer().serializeToString(svg);
-      const url = URL.createObjectURL(new Blob([data], { type: 'image/svg+xml;charset=utf-8' }));
-      const img = new Image();
-      img.onload = () => {
-        const scale = 2; // ретина-качество
-        const canvas = document.createElement('canvas');
-        canvas.width = Math.ceil(w * scale);
-        canvas.height = Math.ceil(h * scale);
-        const ctx = canvas.getContext('2d');
-        ctx.fillStyle = '#ffffff';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        ctx.setTransform(scale, 0, 0, scale, 0, 0);
-        ctx.drawImage(img, 0, 0, w, h);
-        URL.revokeObjectURL(url);
-        canvas.toBlob((blob) => downloadBlob(blob, 'dependencies.png'), 'image/png');
-      };
-      img.onerror = () => { URL.revokeObjectURL(url); showError('Не удалось сконвертировать в PNG'); };
-      img.src = url;
-    }
+/* ---------- wire up ---------- */
+$('text').value=COMPOSE_SAMPLE; $('values').value=HELM_VALUES;
+$('build').addEventListener('click',build);
+$('format').addEventListener('change',()=>{applyFormat();build();});
+$('focus').addEventListener('change',(e)=>{state.focus=e.target.value;renderScene();});
+$('neighbors').addEventListener('change',(e)=>{state.neighbors=e.target.checked;renderScene();});
+$('pick').addEventListener('click',()=>$('file').click());
+$('file').addEventListener('change',(e)=>{const f=e.target.files[0];if(!f)return;const rd=new FileReader();rd.onload=()=>{$('text').value=String(rd.result);$('fname').textContent=f.name;build();};rd.readAsText(f);});
+$('expMermaid').addEventListener('click',()=>{ if(!state.mermaid){toast('Пустой граф');return;} navigator.clipboard?navigator.clipboard.writeText(state.mermaid).then(()=>toast('Mermaid скопирован')).catch(()=>toast('Не удалось скопировать')):toast('Буфер недоступен'); });
+$('expDot').addEventListener('click',()=>{ if(!state.dot){toast('Пустой граф');return;} download('schema.dot',state.dot,'text/vnd.graphviz'); toast('.dot сохранён'); });
+$('expSvg').addEventListener('click',downloadSvg);
+$('expPng').addEventListener('click',downloadPng);
+$('zin').addEventListener('click',()=>zoomBy(1.25));
+$('zout').addEventListener('click',()=>zoomBy(0.8));
+$('zfit').addEventListener('click',()=>{state.userMoved=false;fit();});
 
-    $('copyMermaid').addEventListener('click', () => navigator.clipboard.writeText(last.mermaid));
-    $('downloadSvg').addEventListener('click', downloadSVG);
-    $('downloadPng').addEventListener('click', downloadPNG);
-    $('downloadDot').addEventListener('click', () =>
-      downloadBlob(new Blob([last.dot], { type: 'text/vnd.graphviz' }), 'dependencies.dot'));
-
-    applyFormat();
-    build();
-  </script>
+measure();
+new ResizeObserver(()=>{ measure(); if(!state.userMoved && state.built) fit(); }).observe($('vp'));
+attachPan();
+applyFormat();
+build();
+</script>
 </body>
 </html>
