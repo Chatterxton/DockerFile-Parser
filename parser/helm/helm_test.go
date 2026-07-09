@@ -414,6 +414,107 @@ shardedDatabases:
 	}
 }
 
+func TestRenderExpandsRangeMap(t *testing.T) {
+	tpl := "{{- range $k, $v := .Values.endpoints }}\n{{ $k }}={{ $v }}\n{{- end }}"
+	vals := map[string]string{
+		"endpoints.datadog":    "trace.datadoghq.com",
+		"endpoints.prometheus": "prom.monitoring.svc",
+	}
+	got := Render(tpl, "c", "r", vals)
+	for _, want := range []string{"trace.datadoghq.com", "prom.monitoring.svc"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("range по map не развернулся: нет %q в %q", want, got)
+		}
+	}
+}
+
+func TestRenderWithContext(t *testing.T) {
+	tpl := "{{- with .Values.externalDB }}\nhost={{ .host }}:{{ .port }}\n{{- end }}"
+	vals := map[string]string{"externalDB.host": "db.external.io", "externalDB.port": "5432"}
+	got := Render(tpl, "c", "r", vals)
+	if !strings.Contains(got, "host=db.external.io:5432") {
+		t.Fatalf("with-контекст не развернулся: %q", got)
+	}
+}
+
+func TestRenderWithAbsentSkipsBody(t *testing.T) {
+	tpl := "before{{- with .Values.missing }}\nX={{ .host }}\n{{- end }}after"
+	got := Render(tpl, "c", "r", nil)
+	if strings.Contains(got, "X=") {
+		t.Fatalf("тело with при отсутствующем значении должно пропускаться: %q", got)
+	}
+}
+
+func TestRenderDefineInclude(t *testing.T) {
+	tpl := `{{- define "mychart.dbenv" -}}
+value: postgres://{{ .Release.Name }}-db:5432/app
+{{- end -}}
+env:
+  {{- include "mychart.dbenv" . }}`
+	got := Render(tpl, "mychart", "myapp", nil)
+	if !strings.Contains(got, "postgres://myapp-db:5432/app") {
+		t.Fatalf("include тела define не подставился: %q", got)
+	}
+	if strings.Contains(got, "define") {
+		t.Fatalf("блок define не должен попадать в вывод: %q", got)
+	}
+}
+
+func TestRenderPrintf(t *testing.T) {
+	vals := map[string]string{"name": "cache"}
+	got := Render(`{{ printf "%s-headless.%s.svc" .Values.name .Release.Namespace }}`, "c", "r", vals)
+	if got != "cache-headless.default.svc" {
+		t.Fatalf("printf не собрал хост: %q", got)
+	}
+}
+
+// Сквозной чарт: named template + with + map-range дают рёбра ко всем хостам.
+func TestParseDefineWithMapRangeEdges(t *testing.T) {
+	tpl := `
+{{- define "app.brokers" -}}
+{{- range $name, $addr := .Values.brokers }}
+- name: BROKER_{{ $name }}
+  value: {{ $addr }}
+{{- end }}
+{{- end -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-app
+spec:
+  template:
+    spec:
+      containers:
+        - name: app
+          image: myorg/app
+          env:
+            {{- include "app.brokers" . | nindent 12 }}
+            {{- with .Values.cache }}
+            - name: CACHE
+              value: redis://{{ .host }}:{{ .port }}/0
+            {{- end }}
+`
+	vals := `
+brokers:
+  east: kafka-east.msg.internal:9092
+  west: kafka-west.msg.internal:9092
+cache:
+  host: redis-primary.cache.internal
+  port: 6379
+`
+	g, err := Parse([]byte(tpl), []byte(vals), Options{Release: "myapp"})
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	for _, host := range []string{
+		"kafka-east.msg.internal", "kafka-west.msg.internal", "redis-primary.cache.internal",
+	} {
+		if edge(g, "myapp-app", host) == nil {
+			t.Fatalf("нет ребра myapp-app→%s; рёбра: %+v", host, g.Edges)
+		}
+	}
+}
+
 func TestParseExternalFromValues(t *testing.T) {
 	g := parseFixture(t)
 	if n := node(g, "api.stripe.com"); n == nil || !n.External {

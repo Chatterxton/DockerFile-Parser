@@ -48,61 +48,170 @@ func Render(text, chartName, release string, values map[string]string) string {
 	if release == "" {
 		release = "release"
 	}
-	text = expandRanges(text, values) // развернуть циклы по массивам до подстановки
+	// pre-passes до подстановки: сначала вносим тела именованных шаблонов, затем
+	// разворачиваем циклы и with-контексты — так хосты из всех веток попадают
+	// в текст, который добьёт основной проход resolveExpr.
+	var defines map[string]string
+	defines, text = extractDefines(text)
+	text = expandIncludes(text, defines)
+	text = expandRanges(text, values)
+	text = expandWith(text, values)
 	return tmplRe.ReplaceAllStringFunc(text, func(m string) string {
 		sub := tmplRe.FindStringSubmatch(m)
 		return resolveExpr(sub[1], chartName, release, values)
 	})
 }
 
-// expandRanges разворачивает {{ range [$i,] $e := .Values.LIST }} BODY {{ end }}
-// в конкатенацию BODY по каждому элементу массива LIST из values. Ссылки на
-// переменную цикла внутри тела ($e.field → .Values.LIST.N.field, $i → N)
-// переписываются в обычные .Values-выражения, которые доберёт основной рендер.
-// Нужно, чтобы хосты из элементов массива (шарды БД и т.п.) попадали в граф.
-// Директивы управления без цикла ({{ if }}/{{ with }}) не трогаем — их снимает
-// resolveExpr. Вложенные range разворачиваются последующими итерациями.
-func expandRanges(text string, values map[string]string) string {
-	for iter := 0; iter < 1000; iter++ { // предохранитель от кривых шаблонов
-		tokens := tmplRe.FindAllStringSubmatchIndex(text, -1)
-		ri := -1
-		for i, tk := range tokens {
-			if firstWord(text[tk[2]:tk[3]]) == "range" {
-				ri = i
-				break
-			}
-		}
-		if ri < 0 {
+// firstBlock находит первый блок {{ keyword … }} BODY {{ end }} с учётом
+// вложенности блочных директив. hs..he — внешние границы (для вырезания),
+// bs..be — тело; header — содержимое открывающего тега.
+func firstBlock(text, keyword string) (hs, he, bs, be int, header string, ok bool) {
+	tokens := tmplRe.FindAllStringSubmatchIndex(text, -1)
+	ri := -1
+	for i, tk := range tokens {
+		if firstWord(text[tk[2]:tk[3]]) == keyword {
+			ri = i
 			break
 		}
-		// ищем парный {{ end }} с учётом вложенности блочных директив
-		depth, ei := 0, -1
-		for i := ri; i < len(tokens); i++ {
-			switch firstWord(text[tokens[i][2]:tokens[i][3]]) {
-			case "range", "if", "with", "define", "block":
-				depth++
-			case "end":
-				depth--
-				if depth == 0 {
-					ei = i
+	}
+	if ri < 0 {
+		return
+	}
+	depth, ei := 0, -1
+	for i := ri; i < len(tokens); i++ {
+		switch firstWord(text[tokens[i][2]:tokens[i][3]]) {
+		case "range", "if", "with", "define", "block":
+			depth++
+		case "end":
+			depth--
+			if depth == 0 {
+				ei = i
+			}
+		}
+		if ei >= 0 {
+			break
+		}
+	}
+	if ei < 0 {
+		return
+	}
+	hs, he = tokens[ri][0], tokens[ei][1]
+	bs, be = tokens[ri][1], tokens[ei][0]
+	header = strings.TrimSpace(text[tokens[ri][2]:tokens[ri][3]])
+	ok = true
+	return
+}
+
+// extractDefines вырезает {{ define "NAME" }} BODY {{ end }} из текста (они не
+// рендерятся на месте) и возвращает тела по именам для последующего include.
+func extractDefines(text string) (map[string]string, string) {
+	defs := map[string]string{}
+	for i := 0; i < 1000; i++ {
+		hs, he, bs, be, header, ok := firstBlock(text, "define")
+		if !ok {
+			break
+		}
+		if name := firstQuoted(header); name != "" {
+			defs[name] = text[bs:be]
+		}
+		text = text[:hs] + text[he:]
+	}
+	return defs, text
+}
+
+// expandIncludes подставляет тело именованного шаблона на место {{ include "NAME" … }}
+// (и {{ template "NAME" … }}). Пайпы форматирования при этом отбрасываются —
+// для поиска хостов важно лишь содержимое. Неизвестные include оставляем
+// resolveInclude (эвристика *.fullname/*.name). Вложенные include разворачиваются
+// повторными проходами.
+func expandIncludes(text string, defines map[string]string) string {
+	if len(defines) == 0 {
+		return text
+	}
+	for i := 0; i < 50; i++ {
+		changed := false
+		text = tmplRe.ReplaceAllStringFunc(text, func(m string) string {
+			e := strings.TrimSpace(tmplRe.FindStringSubmatch(m)[1])
+			if kw := firstWord(e); kw == "include" || kw == "template" {
+				if body, ok := defines[firstQuoted(e)]; ok {
+					changed = true
+					return applyIndentPipes(body, e) // nindent/indent для корректных отступов YAML
 				}
 			}
-			if ei >= 0 {
-				break
-			}
+			return m
+		})
+		if !changed {
+			break
 		}
-		if ei < 0 {
-			break // нет парного end — оставляем как есть, resolveExpr снимет скобки
-		}
-		header := strings.TrimSpace(text[tokens[ri][2]:tokens[ri][3]])
-		body := text[tokens[ri][1]:tokens[ei][0]]
-		expanded := expandOneRange(header, body, values)
-		text = text[:tokens[ri][0]] + expanded + text[tokens[ei][1]:]
 	}
 	return text
 }
 
-// expandOneRange разворачивает тело одного range-блока по всем индексам массива.
+// applyIndentPipes применяет к телу шаблона пайпы nindent/indent из выражения
+// include (стандартная идиома {{ include "x" . | nindent 8 }} для верных отступов).
+func applyIndentPipes(body, expr string) string {
+	parts := strings.Split(expr, "|")
+	for _, p := range parts[1:] {
+		p = strings.TrimSpace(p)
+		if n, ok := strings.CutPrefix(p, "nindent "); ok {
+			body = "\n" + indentLines(body, atoiSafe(n))
+		} else if n, ok := strings.CutPrefix(p, "indent "); ok {
+			body = indentLines(body, atoiSafe(n))
+		}
+	}
+	return body
+}
+
+// expandWith разворачивает {{ with .Values.FOO }} BODY {{ end }}: внутри тела
+// «.»-ссылки указывают на FOO, поэтому .bar переписывается в .Values.FOO.bar.
+// Если FOO нет в values, тело пропускается (как и в Helm при falsy-значении).
+func expandWith(text string, values map[string]string) string {
+	for i := 0; i < 1000; i++ {
+		hs, he, bs, be, header, ok := firstBlock(text, "with")
+		if !ok {
+			break
+		}
+		repl := ""
+		if prefix, ok := valuesPath(header); ok && hasPrefixKey(prefix, values) {
+			repl = replaceElemDot(text[bs:be], ".Values."+prefix)
+		}
+		text = text[:hs] + repl + text[he:]
+	}
+	return text
+}
+
+func hasPrefixKey(prefix string, values map[string]string) bool {
+	if _, ok := values[prefix]; ok {
+		return true
+	}
+	p := prefix + "."
+	for k := range values {
+		if strings.HasPrefix(k, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// expandRanges разворачивает {{ range [$i,] $e := .Values.COLL }} BODY {{ end }}
+// в конкатенацию BODY по каждому элементу коллекции COLL из values (массив или
+// map). Ссылки на переменную цикла внутри тела ($e.field → .Values.COLL.K.field,
+// $i/$k → K) переписываются в обычные .Values-выражения, которые доберёт основной
+// рендер. Нужно, чтобы хосты из всех элементов коллекции (шарды БД, карты
+// эндпоинтов и т.п.) попадали в граф. Вложенные range разворачиваются
+// последующими итерациями.
+func expandRanges(text string, values map[string]string) string {
+	for iter := 0; iter < 1000; iter++ { // предохранитель от кривых шаблонов
+		hs, he, bs, be, header, ok := firstBlock(text, "range")
+		if !ok {
+			break
+		}
+		text = text[:hs] + expandOneRange(header, text[bs:be], values) + text[he:]
+	}
+	return text
+}
+
+// expandOneRange разворачивает тело одного range-блока по всем ключам коллекции.
 func expandOneRange(header, body string, values map[string]string) string {
 	rest := strings.TrimSpace(strings.TrimPrefix(header, "range"))
 	var idxVar, elemVar, collExpr string
@@ -115,29 +224,29 @@ func expandOneRange(header, body string, values map[string]string) string {
 		}
 		collExpr = strings.TrimSpace(rest[i+2:])
 	} else {
-		collExpr = rest // форма {{ range .Values.LIST }} — переменная цикла это "."
+		collExpr = rest // форма {{ range .Values.COLL }} — переменная цикла это "."
 	}
 
 	prefix, ok := valuesPath(collExpr)
 	if !ok {
 		return "" // коллекция не из .Values — развернуть нечем
 	}
-	idxs := collectIndices(prefix, values)
-	if len(idxs) == 0 {
-		return "" // пустой/неизвестный массив → пустой цикл
+	keys := collectKeys(prefix, values)
+	if len(keys) == 0 {
+		return "" // пустая/неизвестная коллекция → пустой цикл
 	}
 
 	var sb strings.Builder
-	for _, n := range idxs {
+	for _, k := range keys {
 		b := body
-		elemRef := ".Values." + prefix + "." + strconv.Itoa(n)
+		elemRef := ".Values." + prefix + "." + k
 		if elemVar != "" {
 			b = replaceVar(b, elemVar, elemRef)
-		} else { // {{ range .Values.LIST }}: тело обращается к элементу через "."
+		} else { // {{ range .Values.COLL }}: тело обращается к элементу через "."
 			b = replaceElemDot(b, elemRef)
 		}
-		if idxVar != "" {
-			b = replaceVar(b, idxVar, strconv.Itoa(n))
+		if idxVar != "" { // индекс массива (число) или ключ map (строка)
+			b = replaceVar(b, idxVar, k)
 		}
 		sb.WriteString(b)
 		sb.WriteString("\n")
@@ -189,9 +298,11 @@ func valuesPath(expr string) (string, bool) {
 	return s[:end], true
 }
 
-// collectIndices собирает индексы массива values[prefix.N...] по возрастанию.
-func collectIndices(prefix string, values map[string]string) []int {
-	seen := map[int]bool{}
+// collectKeys собирает непосредственные ключи коллекции values[prefix.K...]:
+// индексы массива ("0","1"…) или строковые ключи map. Числовые сортируются по
+// возрастанию, иначе — лексикографически (для детерминизма).
+func collectKeys(prefix string, values map[string]string) []string {
+	set := map[string]bool{}
 	p := prefix + "."
 	for k := range values {
 		if !strings.HasPrefix(k, p) {
@@ -201,16 +312,26 @@ func collectIndices(prefix string, values map[string]string) []int {
 		if d := strings.IndexByte(seg, '.'); d >= 0 {
 			seg = seg[:d]
 		}
-		if n, err := strconv.Atoi(seg); err == nil {
-			seen[n] = true
+		set[seg] = true
+	}
+	keys := make([]string, 0, len(set))
+	allNum := true
+	for s := range set {
+		keys = append(keys, s)
+		if _, err := strconv.Atoi(s); err != nil {
+			allNum = false
 		}
 	}
-	out := make([]int, 0, len(seen))
-	for n := range seen {
-		out = append(out, n)
+	if allNum {
+		sort.Slice(keys, func(i, j int) bool {
+			a, _ := strconv.Atoi(keys[i])
+			b, _ := strconv.Atoi(keys[j])
+			return a < b
+		})
+	} else {
+		sort.Strings(keys)
 	}
-	sort.Ints(out)
-	return out
+	return keys
 }
 
 // firstWord возвращает первое слово выражения (ключевое слово директивы).
@@ -251,13 +372,20 @@ func resolveExpr(expr, chartName, release string, values map[string]string) stri
 	if !ok {
 		return ""
 	}
-	// пайпы форматирования (важно для tpl-инъекций в env)
+	// пайпы форматирования (важно для tpl-инъекций в env и чистоты хостов)
 	for _, p := range parts[1:] {
 		p = strings.TrimSpace(p)
-		if n, ok := strings.CutPrefix(p, "nindent "); ok {
-			val = "\n" + indentLines(val, atoiSafe(n))
-		} else if n, ok := strings.CutPrefix(p, "indent "); ok {
-			val = indentLines(val, atoiSafe(n))
+		switch {
+		case strings.HasPrefix(p, "nindent "):
+			val = "\n" + indentLines(val, atoiSafe(p[len("nindent "):]))
+		case strings.HasPrefix(p, "indent "):
+			val = indentLines(val, atoiSafe(p[len("indent "):]))
+		case strings.HasPrefix(p, "trimSuffix "): // {{ x | trimSuffix "/" }}
+			val = strings.TrimSuffix(val, unquote(strings.TrimSpace(p[len("trimSuffix "):])))
+		case strings.HasPrefix(p, "trimPrefix "):
+			val = strings.TrimPrefix(val, unquote(strings.TrimSpace(p[len("trimPrefix "):])))
+		case p == "quote" || p == "squote" || p == "trim":
+			val = strings.TrimSpace(val) // кавычки не нужны для извлечения хостов
 		}
 	}
 	return val
@@ -271,6 +399,9 @@ func resolveMain(expr, chartName, release string, values map[string]string) (str
 	}
 	if _, err := strconv.Atoi(expr); err == nil { // числовой литерал ({{ $i }} → N)
 		return expr, true
+	}
+	if rest, ok := strings.CutPrefix(expr, "printf "); ok {
+		return resolvePrintf(rest, chartName, release, values), true
 	}
 	if rest, ok := strings.CutPrefix(expr, "tpl "); ok {
 		f := strings.Fields(rest)
@@ -294,6 +425,36 @@ func resolveMain(expr, chartName, release string, values map[string]string) (str
 		return resolveIndex(inner, field, values)
 	}
 	return "", false
+}
+
+var printfVerbRe = regexp.MustCompile(`%[sdvq]`)
+
+// resolvePrintf разрешает printf "FORMAT" ARG...: подставляет вместо %s/%d/%v/%q
+// разрешённые аргументы (.Values/.Release/.Chart или литералы) по порядку.
+// Часто так собирают имена хостов: printf "%s-headless.%s.svc" $name .Release.Namespace.
+func resolvePrintf(rest, chartName, release string, values map[string]string) string {
+	format := firstQuoted(rest)
+	if format == "" {
+		return ""
+	}
+	q := strings.IndexByte(rest, '"')
+	tail := rest[q+1:]
+	if e := strings.IndexByte(tail, '"'); e >= 0 {
+		tail = tail[e+1:]
+	}
+	args := strings.Fields(tail)
+	i := 0
+	return printfVerbRe.ReplaceAllStringFunc(format, func(string) string {
+		if i >= len(args) {
+			return ""
+		}
+		a := args[i]
+		i++
+		if v, ok := resolveValue(a, chartName, release, values); ok {
+			return v
+		}
+		return strings.Trim(a, `"'`) // литерал
+	})
 }
 
 // resolveIndex: "index .Values.a.b ARG..." → значение по ключу a.b.ARG...(.field).
