@@ -31,7 +31,7 @@
   ::-webkit-scrollbar-thumb:hover{background:#324564}
   textarea,input,select{font-family:inherit}
   @keyframes toastin{from{opacity:0;transform:translate(-50%,8px)}to{opacity:1;transform:translate(-50%,0)}}
-  @keyframes dashflow{to{stroke-dashoffset:-14}}
+  @keyframes dashflow{to{stroke-dashoffset:-10}}
 
   .app{display:flex;flex-direction:column;height:100vh;width:100vw;overflow:hidden}
   header{display:flex;align-items:center;gap:13px;padding:0 22px;height:54px;flex-shrink:0;border-bottom:1px solid var(--line2);background:var(--bg)}
@@ -439,7 +439,7 @@ function renderScene(){
     if(state.focus!=='all' && !active && !(keep&&keep.has(e.s)&&keep.has(e.t))) op=state.neighbors?0:0.12;
     if(op===0) continue;
     const stroke=active?ACCENT:(e.dashed?'#4a5a73':'#54687f');
-    const anim=e.dashed?'style="animation:dashflow 1s linear infinite"':'';
+    const anim=e.dashed?'style="animation:dashflow .6s linear infinite"':'';
     let g2=`<g opacity="${op}"><path d="${d}" fill="none" stroke="${stroke}" stroke-width="${active?2.2:1.6}" stroke-dasharray="${e.dashed?'5 5':'0'}" marker-end="url(#${active?'arrowhi':'arrow'})" ${anim}></path>`;
     if(e.label){
       const lw=Math.max(22,e.label.length*6.6+10);
