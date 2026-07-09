@@ -101,15 +101,34 @@ docker run -d --name dockerfile-parser --restart unless-stopped \
 Контейнер слушает `8080` и публикуется только на localhost — наружу его выставит
 nginx.
 
-### 3. nginx как обратный прокси
+### 3. nginx с HTTPS
 
+Работаем только по HTTPS: весь HTTP-трафик редиректится на `443`.
 `/etc/nginx/sites-available/dockerfile-parser` (затем symlink в `sites-enabled/`):
 
 ```nginx
+# HTTP — только ACME-проверка Let's Encrypt и редирект на HTTPS
 server {
     listen 80;
     listen [::]:80;
     server_name dockerfile-parser.example.com;
+
+    location /.well-known/acme-challenge/ { root /var/www/certbot; }
+    location /                            { return 301 https://$host$request_uri; }
+}
+
+# HTTPS
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name dockerfile-parser.example.com;
+
+    ssl_certificate     /etc/letsencrypt/live/dockerfile-parser.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/dockerfile-parser.example.com/privkey.pem;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    # браузер запомнит, что сюда только по HTTPS
+    add_header Strict-Transport-Security "max-age=31536000" always;
 
     # compose-файлы и Helm-чарты бывают большими — поднимаем лимит тела запроса
     client_max_body_size 5m;
@@ -133,19 +152,28 @@ server {
 }
 ```
 
+### 4. Сертификат Let's Encrypt
+
+Домен должен указывать на сервер. Сертификата при первом запуске ещё нет — блок
+`443` не пройдёт `nginx -t`, поэтому сначала получаем сертификат (при первом выпуске
+временно оставьте активным только HTTP-блок):
+
 ```bash
+sudo apt install certbot
+sudo mkdir -p /var/www/certbot
+sudo certbot certonly --webroot -w /var/www/certbot -d dockerfile-parser.example.com
 sudo ln -s /etc/nginx/sites-available/dockerfile-parser /etc/nginx/sites-enabled/
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
-### 4. HTTPS (по желанию)
+Автопродление certbot ставит сам (systemd-таймер). Чтобы nginx подхватывал новый
+сертификат после продления, добавьте hook:
 
 ```bash
-sudo certbot --nginx -d dockerfile-parser.example.com
+sudo certbot renew --deploy-hook "systemctl reload nginx" --dry-run
 ```
 
-certbot сам добавит блок на `443` и редирект с `http`. После этого сервис доступен
-по `https://dockerfile-parser.example.com`.
+Готово — сервис доступен по `https://dockerfile-parser.example.com`.
 
 ## API
 
