@@ -343,6 +343,77 @@ func TestParseEnvFromConfigMap(t *testing.T) {
 	}
 }
 
+// --- range по массивам values ---
+
+func TestRenderExpandsRangeIndexElem(t *testing.T) {
+	tpl := "{{- range $i, $db := .Values.shards }}\n" +
+		"host{{ $i }}={{ $db.host }}:{{ $db.port }}\n" +
+		"{{- end }}"
+	vals := map[string]string{
+		"shards.0.host": "pg-a.internal", "shards.0.port": "5432",
+		"shards.1.host": "pg-b.internal", "shards.1.port": "5433",
+	}
+	got := Render(tpl, "c", "r", vals)
+	for _, want := range []string{"host0=pg-a.internal:5432", "host1=pg-b.internal:5433"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("range не развернулся: нет %q в %q", want, got)
+		}
+	}
+}
+
+func TestRenderExpandsRangeDotForm(t *testing.T) {
+	tpl := "{{- range .Values.hosts }}\n- {{ . }}\n{{- end }}"
+	vals := map[string]string{"hosts.0": "node-a.internal", "hosts.1": "node-b.internal"}
+	got := Render(tpl, "c", "r", vals)
+	for _, want := range []string{"node-a.internal", "node-b.internal"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("range . не развернулся: нет %q в %q", want, got)
+		}
+	}
+}
+
+// Полный чарт: range по массиву шардов должен дать рёбра ко всем элементам.
+func TestParseRangeShardEdges(t *testing.T) {
+	tpl := `
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-engine
+spec:
+  template:
+    spec:
+      containers:
+        - name: engine
+          image: core:v1
+          env:
+            - name: SHARDS
+              value: >-
+                [
+                {{- range $i, $db := .Values.shardedDatabases }}
+                {"url": "jdbc:postgresql://{{ $db.host }}:{{ $db.port }}/data"}
+                {{- end }}
+                ]
+`
+	vals := `
+shardedDatabases:
+  - name: us
+    host: pg-shard-us.aws.internal
+    port: 5432
+  - name: eu
+    host: pg-shard-eu.aws.internal
+    port: 5432
+`
+	g, err := Parse([]byte(tpl), []byte(vals), Options{Release: "myapp"})
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	for _, host := range []string{"pg-shard-us.aws.internal", "pg-shard-eu.aws.internal"} {
+		if edge(g, "myapp-engine", host) == nil {
+			t.Fatalf("нет ребра myapp-engine→%s из range; рёбра: %+v", host, g.Edges)
+		}
+	}
+}
+
 func TestParseExternalFromValues(t *testing.T) {
 	g := parseFixture(t)
 	if n := node(g, "api.stripe.com"); n == nil || !n.External {

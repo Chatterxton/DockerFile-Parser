@@ -48,10 +48,178 @@ func Render(text, chartName, release string, values map[string]string) string {
 	if release == "" {
 		release = "release"
 	}
+	text = expandRanges(text, values) // развернуть циклы по массивам до подстановки
 	return tmplRe.ReplaceAllStringFunc(text, func(m string) string {
 		sub := tmplRe.FindStringSubmatch(m)
 		return resolveExpr(sub[1], chartName, release, values)
 	})
+}
+
+// expandRanges разворачивает {{ range [$i,] $e := .Values.LIST }} BODY {{ end }}
+// в конкатенацию BODY по каждому элементу массива LIST из values. Ссылки на
+// переменную цикла внутри тела ($e.field → .Values.LIST.N.field, $i → N)
+// переписываются в обычные .Values-выражения, которые доберёт основной рендер.
+// Нужно, чтобы хосты из элементов массива (шарды БД и т.п.) попадали в граф.
+// Директивы управления без цикла ({{ if }}/{{ with }}) не трогаем — их снимает
+// resolveExpr. Вложенные range разворачиваются последующими итерациями.
+func expandRanges(text string, values map[string]string) string {
+	for iter := 0; iter < 1000; iter++ { // предохранитель от кривых шаблонов
+		tokens := tmplRe.FindAllStringSubmatchIndex(text, -1)
+		ri := -1
+		for i, tk := range tokens {
+			if firstWord(text[tk[2]:tk[3]]) == "range" {
+				ri = i
+				break
+			}
+		}
+		if ri < 0 {
+			break
+		}
+		// ищем парный {{ end }} с учётом вложенности блочных директив
+		depth, ei := 0, -1
+		for i := ri; i < len(tokens); i++ {
+			switch firstWord(text[tokens[i][2]:tokens[i][3]]) {
+			case "range", "if", "with", "define", "block":
+				depth++
+			case "end":
+				depth--
+				if depth == 0 {
+					ei = i
+				}
+			}
+			if ei >= 0 {
+				break
+			}
+		}
+		if ei < 0 {
+			break // нет парного end — оставляем как есть, resolveExpr снимет скобки
+		}
+		header := strings.TrimSpace(text[tokens[ri][2]:tokens[ri][3]])
+		body := text[tokens[ri][1]:tokens[ei][0]]
+		expanded := expandOneRange(header, body, values)
+		text = text[:tokens[ri][0]] + expanded + text[tokens[ei][1]:]
+	}
+	return text
+}
+
+// expandOneRange разворачивает тело одного range-блока по всем индексам массива.
+func expandOneRange(header, body string, values map[string]string) string {
+	rest := strings.TrimSpace(strings.TrimPrefix(header, "range"))
+	var idxVar, elemVar, collExpr string
+	if i := strings.Index(rest, ":="); i >= 0 {
+		vars := strings.Split(strings.TrimSpace(rest[:i]), ",")
+		if len(vars) == 2 {
+			idxVar, elemVar = strings.TrimSpace(vars[0]), strings.TrimSpace(vars[1])
+		} else if len(vars) == 1 {
+			elemVar = strings.TrimSpace(vars[0])
+		}
+		collExpr = strings.TrimSpace(rest[i+2:])
+	} else {
+		collExpr = rest // форма {{ range .Values.LIST }} — переменная цикла это "."
+	}
+
+	prefix, ok := valuesPath(collExpr)
+	if !ok {
+		return "" // коллекция не из .Values — развернуть нечем
+	}
+	idxs := collectIndices(prefix, values)
+	if len(idxs) == 0 {
+		return "" // пустой/неизвестный массив → пустой цикл
+	}
+
+	var sb strings.Builder
+	for _, n := range idxs {
+		b := body
+		elemRef := ".Values." + prefix + "." + strconv.Itoa(n)
+		if elemVar != "" {
+			b = replaceVar(b, elemVar, elemRef)
+		} else { // {{ range .Values.LIST }}: тело обращается к элементу через "."
+			b = replaceElemDot(b, elemRef)
+		}
+		if idxVar != "" {
+			b = replaceVar(b, idxVar, strconv.Itoa(n))
+		}
+		sb.WriteString(b)
+		sb.WriteString("\n")
+	}
+	return sb.String()
+}
+
+// replaceVar заменяет переменную цикла ($e) на выражение-ссылку, но только как
+// целый идентификатор (чтобы $e не задел $employee).
+func replaceVar(body, name, repl string) string {
+	re := regexp.MustCompile(regexp.QuoteMeta(name) + `\b`)
+	return re.ReplaceAllString(body, repl)
+}
+
+// replaceElemDot подставляет ссылку на элемент в форме {{ range .Values.LIST }},
+// где тело обращается к полям через ведущую точку: {{ .host }} → элемент.host.
+// Заменяет только внутри шаблонных скобок и не трогает .Values/.Release/.Chart.
+func replaceElemDot(body, elemRef string) string {
+	return tmplRe.ReplaceAllStringFunc(body, func(m string) string {
+		sub := tmplRe.FindStringSubmatch(m)
+		e := strings.TrimSpace(sub[1])
+		switch {
+		case e == ".":
+			return strings.Replace(m, ".", elemRef, 1)
+		case strings.HasPrefix(e, ".") && !strings.HasPrefix(e, ".Values") &&
+			!strings.HasPrefix(e, ".Release") && !strings.HasPrefix(e, ".Chart"):
+			return strings.Replace(m, e, elemRef+e, 1)
+		}
+		return m
+	})
+}
+
+// valuesPath вытаскивает из выражения путь ключа после .Values. (устойчив к
+// обёрткам и пайпам: "(.Values.list)", ".Values.list | ...").
+func valuesPath(expr string) (string, bool) {
+	k := strings.Index(expr, ".Values.")
+	if k < 0 {
+		return "", false
+	}
+	s := expr[k+len(".Values."):]
+	end := len(s)
+	for i, r := range s {
+		if !(r == '.' || r == '_' || r == '-' ||
+			r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9') {
+			end = i
+			break
+		}
+	}
+	return s[:end], true
+}
+
+// collectIndices собирает индексы массива values[prefix.N...] по возрастанию.
+func collectIndices(prefix string, values map[string]string) []int {
+	seen := map[int]bool{}
+	p := prefix + "."
+	for k := range values {
+		if !strings.HasPrefix(k, p) {
+			continue
+		}
+		seg := k[len(p):]
+		if d := strings.IndexByte(seg, '.'); d >= 0 {
+			seg = seg[:d]
+		}
+		if n, err := strconv.Atoi(seg); err == nil {
+			seen[n] = true
+		}
+	}
+	out := make([]int, 0, len(seen))
+	for n := range seen {
+		out = append(out, n)
+	}
+	sort.Ints(out)
+	return out
+}
+
+// firstWord возвращает первое слово выражения (ключевое слово директивы).
+func firstWord(s string) string {
+	s = strings.TrimSpace(s)
+	if i := strings.IndexAny(s, " \t"); i >= 0 {
+		return s[:i]
+	}
+	return s
 }
 
 func resolveExpr(expr, chartName, release string, values map[string]string) string {
@@ -100,6 +268,9 @@ func resolveExpr(expr, chartName, release string, values map[string]string) stri
 func resolveMain(expr, chartName, release string, values map[string]string) (string, bool) {
 	if v, ok := resolveValue(expr, chartName, release, values); ok {
 		return v, true
+	}
+	if _, err := strconv.Atoi(expr); err == nil { // числовой литерал ({{ $i }} → N)
+		return expr, true
 	}
 	if rest, ok := strings.CutPrefix(expr, "tpl "); ok {
 		f := strings.Fields(rest)
