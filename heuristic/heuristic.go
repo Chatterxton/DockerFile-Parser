@@ -26,12 +26,13 @@ var dbKeywords = []string{
 	"cockroach", "influxdb", "couchdb", "neo4j", "etcd", "nats",
 }
 
-// ExtractHosts достаёт имена хостов из значения (env-переменной, URL, списка).
-// Разбивает по разделителям списков, сохраняя ':' (порт) внутри токена, и
-// корректно вытаскивает хост из URL (включая user:pass@host).
+// ExtractHosts достаёт имена хостов из значения (env-переменной, URL, списка,
+// JSON). Разбивает по разделителям списков и JSON-синтаксису (кавычки, скобки),
+// сохраняя ':' (порт) внутри токена, и корректно вытаскивает хост из URL.
 func ExtractHosts(val string) []string {
 	fields := strings.FieldsFunc(val, func(r rune) bool {
-		return r == ' ' || r == '\t' || r == '\n' || r == ',' || r == ';'
+		return r == ' ' || r == '\t' || r == '\n' || r == ',' || r == ';' ||
+			r == '{' || r == '}' || r == '[' || r == ']' || r == '"' || r == '\''
 	})
 	var hosts []string
 	for _, f := range fields {

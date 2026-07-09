@@ -44,6 +44,9 @@ func TestExtractHosts(t *testing.T) {
 		{"mongodb+srv://user:secret@mongo-replica-1:27017,mongo-replica-2:27017/users?replicaSet=rs0", []string{"mongo-replica-1", "mongo-replica-2"}},
 		{"amqp://guest:guest@rabbitmq-broker:5672/vhost", []string{"rabbitmq-broker"}},
 		{"dns:///billing-svc.default.svc.cluster.local:9090", []string{"billing-svc.default.svc.cluster.local"}},
+		// ключи JSON (orders/events) тоже попадают в кандидаты, но отсеиваются
+		// в connect (не сервисы, без точки); важно, что хосты извлечены
+		{`{"orders":"kafka-cluster.prod:9092","events":"redpanda.prod:9092"}`, []string{"orders", "kafka-cluster.prod", "events", "redpanda.prod"}},
 	}
 	for _, c := range cases {
 		got := ExtractHosts(c.in)
