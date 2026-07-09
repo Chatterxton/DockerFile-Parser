@@ -356,12 +356,12 @@ function layout(g){
   // ширина колонки = самый широкий узел в ней; x — накопительно (карточки не наезжают)
   const colW={}; colKeys.forEach(l=>colW[l]=Math.max(...cols[l].map(id=>byId[id].w)));
   let acc=0; const colX={}; colKeys.forEach(l=>{ colX[l]=acc; acc+=colW[l]+COLGAP; });
-  colKeys.forEach(l=>{
-    const arr=cols[l]; const off=-(arr.length-1)*ROWH/2;
-    arr.forEach((id,i)=>{ byId[id].x=colX[l]; byId[id].y=off+i*ROWH; });
-  });
+
+  // естественная раскладка (barycenter)
+  colKeys.forEach(l=>{ const arr=cols[l]; const off=-(arr.length-1)*ROWH/2; arr.forEach((id,i)=>{ byId[id].x=colX[l]; byId[id].y=off+i*ROWH; }); });
+
   const hues=['#3f6ea8','#6b5aa8','#4a8f7a','#a87f4a'];
-  const assigned={}; // узел рисуется только в одной (первой) сети — иначе рамки наезжают
+  const assigned={}; // узел рисуется только в одной (первой) сети
   const clusters=g.clusters.map((c,ci)=>{
     const mem=c.members.filter(m=>byId[m] && !assigned[m]);
     mem.forEach(m=>assigned[m]=true);
@@ -370,7 +370,47 @@ function layout(g){
     // габариты считаются при рендере — чтобы рамка следовала за перетаскиванием
     return {name:c.name,members:mem,col:hues[ci%hues.length],label,tagW:label.length*7.4+30};
   }).filter(Boolean);
+
+  // если рамки сетей пересекаются или накрывают чужие узлы — раскладываем по
+  // горизонтальным полосам (каждая сеть своя полоса), иначе оставляем как есть.
+  if(clustersMessy(byId, clusters)){
+    const nodeRank={}, seenR={};
+    clusters.forEach((c,ci)=>c.members.forEach(m=>{ if(byId[m]&&seenR[m]===undefined){seenR[m]=1;nodeRank[m]=ci;} }));
+    const NB=clusters.length+1;
+    const rankOf=id=> nodeRank[id]!==undefined?nodeRank[id]:NB-1;
+    const bandMax=new Array(NB).fill(0);
+    colKeys.forEach(l=>{ const cnt=new Array(NB).fill(0); cols[l].forEach(id=>cnt[rankOf(id)]++); for(let r=0;r<NB;r++) bandMax[r]=Math.max(bandMax[r],cnt[r]); });
+    const BANDGAP=54, bandTop=new Array(NB).fill(0);
+    for(let r=1;r<NB;r++) bandTop[r]=bandTop[r-1]+(bandMax[r-1]?bandMax[r-1]*ROWH+BANDGAP:0);
+    colKeys.forEach(l=>{
+      const byBand={}; cols[l].forEach(id=>{ (byBand[rankOf(id)]=byBand[rankOf(id)]||[]).push(id); });
+      for(let r=0;r<NB;r++){
+        const arr=byBand[r]; if(!arr||!arr.length) continue;
+        arr.sort((a,b)=>(pos[a]||0)-(pos[b]||0));
+        const off=bandTop[r]+(bandMax[r]-arr.length)/2*ROWH;
+        arr.forEach((id,i)=>{ byId[id].x=colX[l]; byId[id].y=off+i*ROWH; });
+      }
+    });
+  }
   return {nodes,edges:g.edges,clusters,byId};
+}
+
+// clustersMessy — пересекаются ли рамки сетей между собой или накрывают чужой узел.
+function clustersMessy(byId, clusters){
+  const boxOf=c=>{ const ms=c.members.map(m=>byId[m]).filter(Boolean); if(!ms.length)return null; const pad=22;
+    const x=Math.min(...ms.map(n=>n.x))-pad, y=Math.min(...ms.map(n=>n.y))-pad-14;
+    return {x,y,w:Math.max(...ms.map(n=>n.x+n.w))+pad-x, h:Math.max(...ms.map(n=>n.y+n.h))+pad-y}; };
+  const ov=(a,b)=>a.x<b.x+b.w&&a.x+a.w>b.x&&a.y<b.y+b.h&&a.y+a.h>b.y;
+  const boxes=clusters.map(boxOf);
+  for(let i=0;i<boxes.length;i++){ if(!boxes[i])continue;
+    for(let j=i+1;j<boxes.length;j++){ if(boxes[j]&&ov(boxes[i],boxes[j])) return true; }
+  }
+  const nodes=Object.values(byId);
+  for(let i=0;i<clusters.length;i++){ const b=boxes[i]; if(!b)continue;
+    for(const n of nodes){ if(clusters[i].members.indexOf(n.id)>=0)continue;
+      if(ov(b,{x:n.x,y:n.y,w:n.w,h:n.h})) return true; }
+  }
+  return false;
 }
 
 /* ---------- focus ---------- */
