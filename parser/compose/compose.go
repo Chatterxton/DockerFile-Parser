@@ -17,12 +17,48 @@ type Compose struct {
 
 // Service — один сервис с уже нормализованными полями.
 type Service struct {
-	Image       string     `yaml:"image"`
-	Ports       StringList `yaml:"ports"`
-	DependsOn   KeyList    `yaml:"depends_on"`
-	Links       []string   `yaml:"links"`
-	Environment EnvMap     `yaml:"environment"`
-	Networks    KeyList    `yaml:"networks"`
+	Image       string         `yaml:"image"`
+	Ports       StringList     `yaml:"ports"`
+	DependsOn   KeyList        `yaml:"depends_on"`
+	Links       []string       `yaml:"links"`
+	Environment EnvMap         `yaml:"environment"`
+	Networks    NetSpec        `yaml:"networks"`
+	NetworkMode string         `yaml:"network_mode"`
+	Extra       map[string]any `yaml:",inline"` // прочие поля (в т.ч. развёрнутый <<-якорь)
+}
+
+// NetSpec — сети сервиса: имена и сетевые алиасы (по алиасу на сервис могут
+// ссылаться из env другого сервиса).
+type NetSpec struct {
+	Names   []string
+	Aliases []string
+}
+
+// UnmarshalYAML разбирает networks в двух формах: список имён и карту
+// (значение карты может содержать aliases).
+func (n *NetSpec) UnmarshalYAML(node *yaml.Node) error {
+	switch node.Kind {
+	case yaml.SequenceNode:
+		for _, item := range node.Content {
+			n.Names = append(n.Names, item.Value)
+		}
+	case yaml.MappingNode:
+		for i := 0; i+1 < len(node.Content); i += 2 {
+			n.Names = append(n.Names, node.Content[i].Value)
+			val := node.Content[i+1]
+			if val.Kind != yaml.MappingNode {
+				continue
+			}
+			for j := 0; j+1 < len(val.Content); j += 2 {
+				if val.Content[j].Value == "aliases" && val.Content[j+1].Kind == yaml.SequenceNode {
+					for _, a := range val.Content[j+1].Content {
+						n.Aliases = append(n.Aliases, a.Value)
+					}
+				}
+			}
+		}
+	}
+	return nil
 }
 
 // StringList — список скаляров. В YAML порт может быть "80:80", числом 80

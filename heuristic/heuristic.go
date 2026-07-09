@@ -4,8 +4,8 @@
 package heuristic
 
 import (
-	"net/url"
 	"path"
+	"regexp"
 	"strings"
 )
 
@@ -42,22 +42,54 @@ func ExtractHosts(val string) []string {
 	return hosts
 }
 
+// hostFromField достаёт хост из одного токена. Устойчив к «злым» строкам:
+// схемам jdbc:x://host, префиксам KEY=..., паролям с '@' и '/' внутри.
 func hostFromField(f string) string {
-	if strings.Contains(f, "://") {
-		if u, err := url.Parse(f); err == nil && u.Hostname() != "" {
-			return u.Hostname()
+	if i := strings.Index(f, "://"); i >= 0 {
+		// есть схема — берём всё после ://; пароль может содержать '/' и '@',
+		// поэтому сначала берём хост после ПОСЛЕДНЕГО '@'.
+		f = f[i+3:]
+		if j := strings.LastIndexByte(f, '@'); j >= 0 {
+			f = f[j+1:]
+		}
+	} else {
+		// нет схемы: отрезаем query/путь, затем KEY= и user@
+		if j := strings.IndexByte(f, '?'); j >= 0 {
+			f = f[:j]
+		}
+		if j := strings.IndexByte(f, '/'); j >= 0 {
+			f = f[:j]
+		}
+		if j := strings.LastIndexByte(f, '='); j >= 0 {
+			f = f[j+1:]
+		}
+		if j := strings.LastIndexByte(f, '@'); j >= 0 {
+			f = f[j+1:]
 		}
 	}
-	if i := strings.IndexByte(f, '/'); i >= 0 { // отрезаем путь
+	if i := strings.IndexByte(f, '/'); i >= 0 { // путь
 		f = f[:i]
 	}
-	if i := strings.LastIndexByte(f, '@'); i >= 0 { // user:pass@host
-		f = f[i+1:]
-	}
-	if i := strings.IndexByte(f, ':'); i >= 0 { // host:port
+	if i := strings.IndexByte(f, ':'); i >= 0 { // порт
 		f = f[:i]
 	}
 	return f
+}
+
+var envVarRe = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)((?::?-)([^}]*))?\}`)
+
+// ExpandEnv подставляет compose-переменные окружения: ${VAR:-default} и
+// ${VAR-default} → default; ${VAR} и $VAR (значение неизвестно) → пусто.
+func ExpandEnv(s string) string {
+	s = envVarRe.ReplaceAllStringFunc(s, func(m string) string {
+		g := envVarRe.FindStringSubmatch(m)
+		if g[2] != "" { // была форма :-default или -default
+			return g[3]
+		}
+		return ""
+	})
+	// голый $VAR без значения
+	return regexp.MustCompile(`\$[A-Za-z_][A-Za-z0-9_]*`).ReplaceAllString(s, "")
 }
 
 // ResolveInternal сопоставляет хост со своим сервисом, понимая адреса

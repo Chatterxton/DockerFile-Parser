@@ -55,6 +55,47 @@ func Build(c *compose.Compose, cfg Config) *model.Graph {
 		})
 	}
 
+	// Карта алиасов → сервис: сетевые алиасы принадлежат своему сервису,
+	// link-алиасы указывают на target (напр. "legacy:mono" → mono→legacy).
+	aliasMap := map[string]string{}
+	for _, name := range services {
+		for _, a := range c.Services[name].Networks.Aliases {
+			if !known[a] {
+				aliasMap[a] = name
+			}
+		}
+	}
+	for _, name := range services {
+		for _, link := range c.Services[name].Links {
+			if t, a, ok := strings.Cut(link, ":"); ok && a != "" && known[t] && !known[a] {
+				aliasMap[a] = t
+			}
+		}
+	}
+
+	// connect: хост → своя связь (сервис / k8s-FQDN / алиас) или внешний узел.
+	connect := func(from, host, detail string) {
+		if host == "" || host == from || ignore[host] {
+			return
+		}
+		if target, ok := heuristic.ResolveInternal(host, known); ok {
+			if target != from {
+				g.AddEdge(from, target, model.EdgeNetwork, detail)
+			}
+			return
+		}
+		if target, ok := aliasMap[host]; ok {
+			if target != from {
+				g.AddEdge(from, target, model.EdgeNetwork, detail)
+			}
+			return
+		}
+		if heuristic.IsExternalHost(host, cfg.ExternalPatterns) {
+			g.AddNode(model.Node{ID: host, Label: host, Kind: model.KindExternal, External: true})
+			g.AddEdge(from, host, model.EdgeNetwork, detail)
+		}
+	}
+
 	// Рёбра.
 	for _, name := range services {
 		svc := c.Services[name]
@@ -70,26 +111,23 @@ func Build(c *compose.Compose, cfg Config) *model.Graph {
 				g.AddEdge(name, target, model.EdgeLink, "")
 			}
 		}
+		// network_mode: service:X — сервис делит сетевой стек другого.
+		if t, ok := strings.CutPrefix(svc.NetworkMode, "service:"); ok && known[t] && t != name {
+			g.AddEdge(name, t, model.EdgeLink, "network_mode")
+		}
 		for _, key := range sortedEnvKeys(svc.Environment) {
-			for _, host := range heuristic.ExtractHosts(svc.Environment[key]) {
-				if host == "" || ignore[host] {
-					continue
-				}
-				// Сначала пробуем свернуть к своему сервису (в т.ч. k8s-FQDN).
-				if target, ok := heuristic.ResolveInternal(host, known); ok {
-					if target != name {
-						g.AddEdge(name, target, model.EdgeNetwork, key)
-					}
-					continue
-				}
-				if heuristic.IsExternalHost(host, cfg.ExternalPatterns) {
-					g.AddNode(model.Node{
-						ID: host, Label: host, Kind: model.KindExternal, External: true,
-					})
-					g.AddEdge(name, host, model.EdgeNetwork, key)
-				}
+			for _, host := range heuristic.ExtractHosts(heuristic.ExpandEnv(svc.Environment[key])) {
+				connect(name, host, key)
 			}
 		}
+		// Прочие поля (в т.ч. развёрнутый <<-якорь): сканируем строки со схемой.
+		scanExtra(svc.Extra, "", func(key, s string) {
+			if strings.Contains(s, "://") {
+				for _, host := range heuristic.ExtractHosts(heuristic.ExpandEnv(s)) {
+					connect(name, host, key)
+				}
+			}
+		})
 	}
 
 	// Точки входа: сервис с опубликованными портами доступен снаружи.
@@ -108,6 +146,23 @@ func Build(c *compose.Compose, cfg Config) *model.Graph {
 	return g
 }
 
+// scanExtra рекурсивно обходит прочие поля сервиса и вызывает fn для каждой
+// строки (key — ключ карты, из которого она пришла).
+func scanExtra(v any, key string, fn func(k, s string)) {
+	switch t := v.(type) {
+	case string:
+		fn(key, t)
+	case map[string]any:
+		for k, val := range t {
+			scanExtra(val, k, fn)
+		}
+	case []any:
+		for _, item := range t {
+			scanExtra(item, key, fn)
+		}
+	}
+}
+
 // publishedPorts берёт опубликованную (левую) часть маппинга "80:8080" → "80".
 func publishedPorts(ports []string) []string {
 	out := make([]string, 0, len(ports))
@@ -123,7 +178,7 @@ func publishedPorts(ports []string) []string {
 func buildGroups(c *compose.Compose, services []string) []model.Group {
 	netNodes := map[string][]string{}
 	for _, name := range services {
-		for _, net := range c.Services[name].Networks {
+		for _, net := range c.Services[name].Networks.Names {
 			netNodes[net] = append(netNodes[net], name)
 		}
 	}

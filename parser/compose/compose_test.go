@@ -107,7 +107,7 @@ func TestParseEnvironmentListForm(t *testing.T) {
 
 func TestParseNetworksListForm(t *testing.T) {
 	c, _ := Parse([]byte(fixture))
-	got := []string(c.Services["api"].Networks)
+	got := c.Services["api"].Networks.Names
 	want := []string{"frontend", "backend"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("api.Networks: ожидалось %v, получили %v", want, got)

@@ -361,13 +361,9 @@ function layout(g){
     const mem=c.members.filter(m=>byId[m] && !assigned[m]);
     mem.forEach(m=>assigned[m]=true);
     if(!mem.length) return null;
-    const ms=mem.map(m=>byId[m]);
-    const pad=22;
-    const x=Math.min(...ms.map(n=>n.x))-pad, y=Math.min(...ms.map(n=>n.y))-pad-14;
-    const x2=Math.max(...ms.map(n=>n.x+n.w))+pad, y2=Math.max(...ms.map(n=>n.y+n.h))+pad;
-    const col=hues[ci%hues.length];
     const label=(c.name||'').toUpperCase();
-    return {name:c.name,x,y,w:x2-x,h:y2-y,col,label,tagW:label.length*7.4+30};
+    // габариты считаются при рендере — чтобы рамка следовала за перетаскиванием
+    return {name:c.name,members:mem,col:hues[ci%hues.length],label,tagW:label.length*7.4+30};
   }).filter(Boolean);
   return {nodes,edges:g.edges,clusters,byId};
 }
@@ -402,14 +398,18 @@ function renderScene(){
   const byId=g.byId||{};
   const parts=[];
 
-  // clusters
+  // clusters — габариты по текущим позициям узлов (следуют за перетаскиванием)
   for(const c of g.clusters||[]){
+    const ms=(c.members||[]).map(m=>byId[m]).filter(Boolean); if(!ms.length) continue;
+    const pad=22;
+    const x=Math.min(...ms.map(n=>n.x))-pad, y=Math.min(...ms.map(n=>n.y))-pad-14;
+    const w=Math.max(...ms.map(n=>n.x+n.w))+pad-x, h=Math.max(...ms.map(n=>n.y+n.h))+pad-y;
     parts.push(
       `<g>`+
-      `<rect x="${c.x}" y="${c.y}" width="${c.w}" height="${c.h}" rx="18" fill="${c.col}12" stroke="${c.col}55" stroke-width="1.5" stroke-dasharray="2 6"></rect>`+
-      `<rect x="${c.x+14}" y="${c.y-11}" width="${c.tagW}" height="22" rx="6" fill="#0b0f16" stroke="${c.col}55" stroke-width="1"></rect>`+
-      `<circle cx="${c.x+26}" cy="${c.y}" r="3" fill="${c.col}"></circle>`+
-      `<text x="${c.x+36}" y="${c.y+4}" font-family="${MONO}" font-size="12" font-weight="600" fill="${c.col}" letter-spacing="1">${esc(c.label)}</text>`+
+      `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="18" fill="${c.col}12" stroke="${c.col}55" stroke-width="1.5" stroke-dasharray="2 6"></rect>`+
+      `<rect x="${x+14}" y="${y-11}" width="${c.tagW}" height="22" rx="6" fill="#0b0f16" stroke="${c.col}55" stroke-width="1"></rect>`+
+      `<circle cx="${x+26}" cy="${y}" r="3" fill="${c.col}"></circle>`+
+      `<text x="${x+36}" y="${y+4}" font-family="${MONO}" font-size="12" font-weight="600" fill="${c.col}" letter-spacing="1">${esc(c.label)}</text>`+
       `</g>`
     );
   }
@@ -447,7 +447,7 @@ function renderScene(){
     const focused = state.focus===n.id;
     const label = n.label.length>18 ? n.label.slice(0,17)+'…' : n.label;
     parts.push(
-      `<g transform="translate(${n.x} ${n.y})" opacity="${op}" data-id="${esc(n.id)}" style="cursor:pointer">`+
+      `<g transform="translate(${n.x} ${n.y})" opacity="${op}" data-id="${esc(n.id)}" style="cursor:grab">`+
       `<rect width="${n.w}" height="${n.h}" rx="12" fill="${ty.fill}" stroke="${focused?ACCENT:ty.stroke}" stroke-width="${focused?2.4:1.4}" filter="url(#nodeshadow)"></rect>`+
       `<circle cx="26" cy="${n.h/2}" r="14" fill="${ty.iconbg}"></circle>`+
       `<text x="26" y="${n.h/2+4.5}" text-anchor="middle" font-family="${MONO}" font-size="13" font-weight="700" fill="${ty.accent}">${esc(initialOf(n))}</text>`+
@@ -491,7 +491,7 @@ function zoomBy(f){
   state.view={tx:cx-wx*ns, ty:cy-wy*ns, scale:ns}; applyView();
 }
 function attachPan(){
-  const vp=$('vp'); let drag=false,sx=0,sy=0,st=null,moved=false;
+  const vp=$('vp'); let mode=null,sx=0,sy=0,st=null,moved=false,dragId=null,startPos=null;
   vp.addEventListener('wheel',(e)=>{
     e.preventDefault(); state.userMoved=true;
     const v=state.view, r=vp.getBoundingClientRect(), px=e.clientX-r.left, py=e.clientY-r.top;
@@ -499,10 +499,33 @@ function attachPan(){
     const wx=(px-v.tx)/v.scale, wy=(py-v.ty)/v.scale;
     state.view={tx:px-wx*ns, ty:py-wy*ns, scale:ns}; applyView();
   },{passive:false});
-  vp.addEventListener('pointerdown',(e)=>{ drag=true;moved=false;sx=e.clientX;sy=e.clientY;st={...state.view};vp.classList.add('grabbing');vp.setPointerCapture(e.pointerId); });
-  vp.addEventListener('pointermove',(e)=>{ if(!drag)return; if(Math.abs(e.clientX-sx)+Math.abs(e.clientY-sy)>4)moved=true; state.userMoved=true; state.view={tx:st.tx+(e.clientX-sx),ty:st.ty+(e.clientY-sy),scale:st.scale}; applyView(); });
-  const end=()=>{drag=false;vp.classList.remove('grabbing');};
-  vp.addEventListener('pointerup',(e)=>{ if(!moved){ const g=e.target.closest('[data-id]'); if(g){ const id=g.getAttribute('data-id'); setFocus(state.focus===id?'all':id); } } end(); });
+  vp.addEventListener('pointerdown',(e)=>{
+    moved=false; sx=e.clientX; sy=e.clientY;
+    const ng=e.target.closest('[data-id]');
+    if(ng){ // перетаскиваем узел
+      mode='node'; dragId=ng.getAttribute('data-id');
+      const n=state.graph.byId[dragId]; startPos=n?{x:n.x,y:n.y}:null;
+    }else{ // панорамируем холст
+      mode='pan'; st={...state.view}; vp.classList.add('grabbing');
+    }
+    vp.setPointerCapture(e.pointerId);
+  });
+  vp.addEventListener('pointermove',(e)=>{
+    if(!mode)return;
+    if(Math.abs(e.clientX-sx)+Math.abs(e.clientY-sy)>4)moved=true;
+    if(mode==='pan'){
+      state.userMoved=true;
+      state.view={tx:st.tx+(e.clientX-sx),ty:st.ty+(e.clientY-sy),scale:st.scale}; applyView();
+    }else if(mode==='node'&&startPos){
+      const n=state.graph.byId[dragId];
+      if(n){ n.x=startPos.x+(e.clientX-sx)/state.view.scale; n.y=startPos.y+(e.clientY-sy)/state.view.scale; renderScene(); }
+    }
+  });
+  const end=()=>{
+    if(mode==='node'&&!moved) setFocus(state.focus===dragId?'all':dragId); // клик по узлу — фокус
+    mode=null; dragId=null; vp.classList.remove('grabbing');
+  };
+  vp.addEventListener('pointerup',end);
   vp.addEventListener('pointercancel',end);
 }
 

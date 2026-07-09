@@ -30,6 +30,50 @@ func TestResolveInternal(t *testing.T) {
 	}
 }
 
+func TestExtractHosts(t *testing.T) {
+	cases := []struct {
+		in   string
+		want []string
+	}{
+		{"http://auth-internal:8080", []string{"auth-internal"}},
+		{"postgres://admin:p@ssw0rd_with/slashes@postgres-primary:5432/billing_db?sslmode=disable", []string{"postgres-primary"}},
+		{"jdbc:postgresql://postgres-primary:5432/db", []string{"postgres-primary"}},
+		{"-Dspring.datasource.url=jdbc:postgresql://postgres-primary:5432/db", []string{"postgres-primary"}},
+		{"-Dremote.audit.host=audit-logger", []string{"audit-logger"}},
+		{"kafka-node-1:9092,external-kafka.confluent.cloud:9092", []string{"kafka-node-1", "external-kafka.confluent.cloud"}},
+		{"mongodb+srv://user:secret@mongo-replica-1:27017,mongo-replica-2:27017/users?replicaSet=rs0", []string{"mongo-replica-1", "mongo-replica-2"}},
+		{"amqp://guest:guest@rabbitmq-broker:5672/vhost", []string{"rabbitmq-broker"}},
+	}
+	for _, c := range cases {
+		got := ExtractHosts(c.in)
+		if len(got) != len(c.want) {
+			t.Errorf("ExtractHosts(%q) = %v, ожидалось %v", c.in, got, c.want)
+			continue
+		}
+		for i := range got {
+			if got[i] != c.want[i] {
+				t.Errorf("ExtractHosts(%q) = %v, ожидалось %v", c.in, got, c.want)
+				break
+			}
+		}
+	}
+}
+
+func TestExpandEnv(t *testing.T) {
+	cases := [][2]string{
+		{"https://${OAUTH_PROVIDER:-login.auth0.com}/oauth/token", "https://login.auth0.com/oauth/token"},
+		{"${DB_HOST-postgres}", "postgres"},
+		{"${UNSET}", ""},
+		{"$BARE", ""},
+		{"plain-host", "plain-host"},
+	}
+	for _, c := range cases {
+		if got := ExpandEnv(c[0]); got != c[1] {
+			t.Errorf("ExpandEnv(%q) = %q, ожидалось %q", c[0], got, c[1])
+		}
+	}
+}
+
 func TestIsExternalHost(t *testing.T) {
 	if !IsExternalHost("api.stripe.com", nil) {
 		t.Error("домен с точкой должен быть внешним")
