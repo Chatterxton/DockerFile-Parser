@@ -24,7 +24,26 @@ type Service struct {
 	Environment EnvMap         `yaml:"environment"`
 	Networks    NetSpec        `yaml:"networks"`
 	NetworkMode string         `yaml:"network_mode"`
+	Extends     ExtendsSpec    `yaml:"extends"`
 	Extra       map[string]any `yaml:",inline"` // прочие поля (в т.ч. развёрнутый <<-якорь)
+}
+
+// ExtendsSpec — имя сервиса, от которого наследуется этот (extends). Понимает
+// строку и форму {service: name}.
+type ExtendsSpec string
+
+func (e *ExtendsSpec) UnmarshalYAML(node *yaml.Node) error {
+	switch node.Kind {
+	case yaml.ScalarNode:
+		*e = ExtendsSpec(node.Value)
+	case yaml.MappingNode:
+		for i := 0; i+1 < len(node.Content); i += 2 {
+			if node.Content[i].Value == "service" {
+				*e = ExtendsSpec(node.Content[i+1].Value)
+			}
+		}
+	}
+	return nil
 }
 
 // NetSpec — сети сервиса: имена и сетевые алиасы (по алиасу на сервис могут

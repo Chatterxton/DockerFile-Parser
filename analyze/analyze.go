@@ -39,9 +39,11 @@ func Build(c *compose.Compose, cfg Config) *model.Graph {
 		ignore[h] = true
 	}
 
+	eff := effectiveServices(c) // учёт extends: сервис наследует поля родителя
+
 	// Узлы своих сервисов.
 	for _, name := range services {
-		svc := c.Services[name]
+		svc := eff[name]
 		kind := model.KindService
 		if heuristic.IsDatabaseImage(svc.Image) {
 			kind = model.KindDatabase
@@ -59,14 +61,14 @@ func Build(c *compose.Compose, cfg Config) *model.Graph {
 	// link-алиасы указывают на target (напр. "legacy:mono" → mono→legacy).
 	aliasMap := map[string]string{}
 	for _, name := range services {
-		for _, a := range c.Services[name].Networks.Aliases {
+		for _, a := range eff[name].Networks.Aliases {
 			if !known[a] {
 				aliasMap[a] = name
 			}
 		}
 	}
 	for _, name := range services {
-		for _, link := range c.Services[name].Links {
+		for _, link := range eff[name].Links {
 			if t, a, ok := strings.Cut(link, ":"); ok && a != "" && known[t] && !known[a] {
 				aliasMap[a] = t
 			}
@@ -75,7 +77,7 @@ func Build(c *compose.Compose, cfg Config) *model.Graph {
 
 	// connect: хост → своя связь (сервис / k8s-FQDN / алиас) или внешний узел.
 	connect := func(from, host, detail string) {
-		if host == "" || host == from || ignore[host] {
+		if host == "" || host == from || ignore[host] || !heuristic.IsValidHost(host) {
 			return
 		}
 		if target, ok := heuristic.ResolveInternal(host, known); ok {
@@ -98,7 +100,7 @@ func Build(c *compose.Compose, cfg Config) *model.Graph {
 
 	// Рёбра.
 	for _, name := range services {
-		svc := c.Services[name]
+		svc := eff[name]
 
 		for _, dep := range svc.DependsOn {
 			if dep != name && known[dep] {
@@ -120,19 +122,18 @@ func Build(c *compose.Compose, cfg Config) *model.Graph {
 				connect(name, host, key)
 			}
 		}
-		// Прочие поля (в т.ч. развёрнутый <<-якорь): сканируем строки со схемой.
+		// Прочие поля (entrypoint/command/healthcheck, <<-якорь): сканируем все
+		// строки — мусор из shell/JSON отсекается валидатором хоста в connect.
 		scanExtra(svc.Extra, "", func(key, s string) {
-			if strings.Contains(s, "://") {
-				for _, host := range heuristic.ExtractHosts(heuristic.ExpandEnv(s)) {
-					connect(name, host, key)
-				}
+			for _, host := range heuristic.ExtractHosts(heuristic.ExpandEnv(s)) {
+				connect(name, host, key)
 			}
 		})
 	}
 
 	// Точки входа: сервис с опубликованными портами доступен снаружи.
 	for _, name := range services {
-		ports := []string(c.Services[name].Ports)
+		ports := []string(eff[name].Ports)
 		if len(ports) == 0 {
 			continue
 		}
@@ -142,8 +143,80 @@ func Build(c *compose.Compose, cfg Config) *model.Graph {
 		g.AddEdge(model.EntryNodeID, name, model.EdgeNetwork, strings.Join(publishedPorts(ports), ","))
 	}
 
-	g.Groups = buildGroups(c, services)
+	g.Groups = buildGroups(eff, services)
 	return g
+}
+
+// effectiveServices применяет extends: каждый сервис получает поля родителя
+// (environment сливается, ребёнок переопределяет; depends_on/links объединяются).
+func effectiveServices(c *compose.Compose) map[string]compose.Service {
+	eff := map[string]compose.Service{}
+	var resolve func(name string, stack map[string]bool) compose.Service
+	resolve = func(name string, stack map[string]bool) compose.Service {
+		if s, ok := eff[name]; ok {
+			return s
+		}
+		svc := c.Services[name]
+		if p := string(svc.Extends); p != "" && !stack[p] {
+			if _, ok := c.Services[p]; ok {
+				stack[name] = true
+				svc = mergeService(resolve(p, stack), svc)
+			}
+		}
+		eff[name] = svc
+		return svc
+	}
+	for name := range c.Services {
+		resolve(name, map[string]bool{})
+	}
+	return eff
+}
+
+func mergeService(parent, child compose.Service) compose.Service {
+	out := child
+	if out.Image == "" {
+		out.Image = parent.Image
+	}
+	if len(out.Ports) == 0 {
+		out.Ports = parent.Ports
+	}
+	if out.NetworkMode == "" {
+		out.NetworkMode = parent.NetworkMode
+	}
+	if len(out.Networks.Names) == 0 {
+		out.Networks = parent.Networks
+	}
+	env := compose.EnvMap{}
+	for k, v := range parent.Environment {
+		env[k] = v
+	}
+	for k, v := range child.Environment {
+		env[k] = v
+	}
+	out.Environment = env
+	out.DependsOn = compose.KeyList(unionStr(parent.DependsOn, child.DependsOn))
+	out.Links = unionStr(parent.Links, child.Links)
+	ex := map[string]any{}
+	for k, v := range parent.Extra {
+		ex[k] = v
+	}
+	for k, v := range child.Extra {
+		ex[k] = v
+	}
+	out.Extra = ex
+	return out
+}
+
+func unionStr(a, b []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, x := range append(append([]string{}, a...), b...) {
+		if !seen[x] {
+			seen[x] = true
+			out = append(out, x)
+		}
+	}
+	return out
 }
 
 // scanExtra рекурсивно обходит прочие поля сервиса и вызывает fn для каждой
@@ -175,10 +248,10 @@ func publishedPorts(ports []string) []string {
 
 // buildGroups собирает сети как группы. Пропускает бессмысленные: пустые/из
 // одного узла и «дефолтную» сеть, в которую входят все сервисы.
-func buildGroups(c *compose.Compose, services []string) []model.Group {
+func buildGroups(eff map[string]compose.Service, services []string) []model.Group {
 	netNodes := map[string][]string{}
 	for _, name := range services {
-		for _, net := range c.Services[name].Networks.Names {
+		for _, net := range eff[name].Networks.Names {
 			netNodes[net] = append(netNodes[net], name)
 		}
 	}

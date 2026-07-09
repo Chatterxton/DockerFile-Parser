@@ -225,7 +225,7 @@ const state = {
   mermaid:'', dot:'',
   focus:'all', neighbors:false,
   view:{tx:60,ty:60,scale:1}, vw:900, vh:560,
-  built:false, userMoved:false, dragId:null,
+  built:false, userMoved:false, dragId:null, raw:null,
 };
 
 const esc = (s) => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -327,8 +327,8 @@ function adapt(g){
 
 /* ---------- layout (layered, barycenter) ---------- */
 function layout(g){
-  const W=148,H=60,COLGAP=104,ROWGAP=40,COLW=W+COLGAP,ROWH=H+ROWGAP;
-  const nodes=g.nodes.map(n=>({...n,w:W,h:H}));
+  const H=60,COLGAP=90,ROWGAP=40,ROWH=H+ROWGAP;
+  const nodes=g.nodes.map(n=>({...n,w:nodeWidth(n),h:H}));
   const byId={}; nodes.forEach(n=>byId[n.id]=n);
   const fwd={}, pred={}; nodes.forEach(n=>{fwd[n.id]=[];pred[n.id]=[];});
   g.edges.forEach(e=>{ if(byId[e.s]&&byId[e.t]){ fwd[e.s].push(e.t); pred[e.t].push(e.s); } });
@@ -353,9 +353,12 @@ function layout(g){
       cols[l].forEach((id,i)=>pos[id]=i);
     });
   }
+  // ширина колонки = самый широкий узел в ней; x — накопительно (карточки не наезжают)
+  const colW={}; colKeys.forEach(l=>colW[l]=Math.max(...cols[l].map(id=>byId[id].w)));
+  let acc=0; const colX={}; colKeys.forEach(l=>{ colX[l]=acc; acc+=colW[l]+COLGAP; });
   colKeys.forEach(l=>{
     const arr=cols[l]; const off=-(arr.length-1)*ROWH/2;
-    arr.forEach((id,i)=>{ byId[id].x=l*COLW; byId[id].y=off+i*ROWH; });
+    arr.forEach((id,i)=>{ byId[id].x=colX[l]; byId[id].y=off+i*ROWH; });
   });
   const hues=['#3f6ea8','#6b5aa8','#4a8f7a','#a87f4a'];
   const assigned={}; // узел рисуется только в одной (первой) сети — иначе рамки наезжают
@@ -392,6 +395,15 @@ function initialOf(n){
   if(n.type==='entry') return '⦿';
   const m=(n.label||'').replace(/[^a-z0-9]/gi,'');
   return m ? m.charAt(0).toUpperCase() : '•';
+}
+// адаптивная ширина карточки под текст (измеряем на canvas)
+const _mctx=document.createElement('canvas').getContext('2d');
+function textW(s,font){ _mctx.font=font; return _mctx.measureText(s||'').width; }
+function nodeDisplayLabel(n){ const l=n.label||''; return l.length>30 ? l.slice(0,29)+'…' : l; }
+function nodeWidth(n){
+  const nameW=textW(nodeDisplayLabel(n), "600 13.5px "+SANS);
+  const subW=textW(nodeSub(n), "10px "+MONO);
+  return Math.round(Math.max(150, Math.min(330, 52+Math.max(nameW,subW)+18)));
 }
 function renderScene(){
   const g=state.graph;
@@ -450,7 +462,7 @@ function renderScene(){
     const isDrag = n.id===state.dragId;
     const focused = state.focus===n.id || isDrag;
     const sw = isDrag?2.8:(state.focus===n.id?2.4:1.4);
-    const label = n.label.length>18 ? n.label.slice(0,17)+'…' : n.label;
+    const label = nodeDisplayLabel(n);
     const s =
       `<g transform="translate(${n.x} ${n.y})" opacity="${op}" data-id="${esc(n.id)}" style="cursor:grab">`+
       `<rect width="${n.w}" height="${n.h}" rx="12" fill="${ty.fill}" stroke="${focused?ACCENT:ty.stroke}" stroke-width="${sw}" filter="url(#nodeshadow)"></rect>`+
@@ -589,7 +601,8 @@ async function build(){
   if(!resp.ok||data.error){ showErr(data.error||('HTTP '+resp.status)); return; }
 
   state.mermaid=data.mermaid||''; state.dot=data.dot||'';
-  state.graph=layout(adapt(data.graph||{nodes:[],edges:[],groups:[]}));
+  state.raw=adapt(data.graph||{nodes:[],edges:[],groups:[]});
+  state.graph=layout(state.raw);
   state.focus='all'; state.built=true; state.userMoved=false;
   populateFocus();
   renderScene();
@@ -656,6 +669,10 @@ new ResizeObserver(()=>{ measure(); if(!state.userMoved && state.built) fit(); }
 attachPan();
 applyFormat();
 build();
+// после загрузки шрифтов пересчитываем ширину карточек по точным метрикам
+if(document.fonts&&document.fonts.ready) document.fonts.ready.then(()=>{
+  if(state.raw && !state.userMoved){ state.graph=layout(state.raw); populateFocus(state.graph); renderScene(); fit(); }
+});
 </script>
 </body>
 </html>

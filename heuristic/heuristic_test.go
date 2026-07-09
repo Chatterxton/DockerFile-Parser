@@ -74,6 +74,21 @@ func TestExpandEnv(t *testing.T) {
 	}
 }
 
+func TestIsValidHost(t *testing.T) {
+	valid := []string{"redis", "consul-agent.infra", "ch-node-1.db", "vault-secret-server.security", "etcd-01.internal", "api.v1"}
+	invalid := []string{"", ".", "secrets...\"", "{\"orders\"", "-Dspring", "a.", ".b", "has space"}
+	for _, h := range valid {
+		if !IsValidHost(h) {
+			t.Errorf("IsValidHost(%q) = false, ожидалось true", h)
+		}
+	}
+	for _, h := range invalid {
+		if IsValidHost(h) {
+			t.Errorf("IsValidHost(%q) = true, ожидалось false", h)
+		}
+	}
+}
+
 func TestIsExternalHost(t *testing.T) {
 	if !IsExternalHost("api.stripe.com", nil) {
 		t.Error("домен с точкой должен быть внешним")

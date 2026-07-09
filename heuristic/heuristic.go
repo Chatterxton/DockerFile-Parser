@@ -118,6 +118,14 @@ func ResolveInternal(host string, known map[string]bool) (string, bool) {
 	return "", false
 }
 
+var validHostRe = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$`)
+
+// IsValidHost проверяет, что строка похожа на реальное DNS-имя. Отсекает мусор
+// из shell-команд и JSON (`.`, `secrets..."`, `{"orders"` и т.п.).
+func IsValidHost(h string) bool {
+	return h != "" && len(h) <= 253 && validHostRe.MatchString(h)
+}
+
 // IsExternalHost: хост внешний, если похож на доменное имя (есть точка) или
 // матчит один из настроенных glob-паттернов.
 func IsExternalHost(host string, patterns []string) bool {
