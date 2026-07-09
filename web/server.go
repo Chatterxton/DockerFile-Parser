@@ -2,7 +2,7 @@
 package web
 
 import (
-	_ "embed" // для //go:embed index.html
+	"embed"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -17,6 +17,9 @@ import (
 
 //go:embed index.html
 var indexHTML []byte
+
+//go:embed assets/fonts/*.woff2
+var assets embed.FS
 
 type buildRequest struct {
 	YAML             string   `json:"yaml"`             // compose-файл или шаблоны Helm
@@ -41,6 +44,7 @@ func NewServer() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", indexHandler)
 	mux.HandleFunc("/api/graph", buildHandler)
+	mux.Handle("/assets/", http.FileServer(http.FS(assets)))
 	return mux
 }
 
