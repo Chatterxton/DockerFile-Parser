@@ -530,6 +530,24 @@ function repel(n){
     }
   }
 }
+// repelMemberClusters — узел не может растянуть рамку СВОЕЙ сети так, чтобы она
+// накрыла чужой модуль (обратная сторона того же правила).
+function repelMemberClusters(n){
+  const nodes=state.graph.nodes;
+  for(const c of (state.graph.clusters||[])){
+    if(!c.members || c.members.indexOf(n.id)<0) continue; // только сети, где n состоит
+    const b=clusterBox(c); if(!b) continue;
+    for(const m of nodes){
+      if(m.id===n.id || c.members.indexOf(m.id)>=0) continue; // m — не сокластерник
+      if(m.x<b.x+b.w && m.x+m.w>b.x && m.y<b.y+b.h && m.y+m.h>b.y){
+        const pl=(b.x+b.w)-m.x, pr=(m.x+m.w)-b.x, pt=(b.y+b.h)-m.y, pb=(m.y+m.h)-b.y;
+        const min=Math.min(pl,pr,pt,pb); // сдвигаем n так, чтобы рамка сошла с m
+        if(min===pl) n.x-=pl; else if(min===pr) n.x+=pr; else if(min===pt) n.y-=pt; else n.y+=pb;
+        return;
+      }
+    }
+  }
+}
 
 function attachPan(){
   const vp=$('vp'); let mode=null,sx=0,sy=0,st=null,moved=false,dragId=null,lx=0,ly=0;
@@ -559,7 +577,7 @@ function attachPan(){
       state.view={tx:st.tx+(e.clientX-sx),ty:st.ty+(e.clientY-sy),scale:st.scale}; applyView();
     }else if(mode==='node'){
       const n=state.graph.byId[dragId];
-      if(n){ n.x+=(e.clientX-lx)/state.view.scale; n.y+=(e.clientY-ly)/state.view.scale; repel(n); scheduleRender(); }
+      if(n){ n.x+=(e.clientX-lx)/state.view.scale; n.y+=(e.clientY-ly)/state.view.scale; repel(n); repelMemberClusters(n); scheduleRender(); }
       lx=e.clientX; ly=e.clientY; // инкрементально: узел упирается в чужие рамки, как в стену
     }
   });
