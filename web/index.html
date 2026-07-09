@@ -356,8 +356,12 @@ function layout(g){
     arr.forEach((id,i)=>{ byId[id].x=l*COLW; byId[id].y=off+i*ROWH; });
   });
   const hues=['#3f6ea8','#6b5aa8','#4a8f7a','#a87f4a'];
+  const assigned={}; // узел рисуется только в одной (первой) сети — иначе рамки наезжают
   const clusters=g.clusters.map((c,ci)=>{
-    const ms=c.members.map(m=>byId[m]).filter(Boolean); if(!ms.length) return null;
+    const mem=c.members.filter(m=>byId[m] && !assigned[m]);
+    mem.forEach(m=>assigned[m]=true);
+    if(!mem.length) return null;
+    const ms=mem.map(m=>byId[m]);
     const pad=22;
     const x=Math.min(...ms.map(n=>n.x))-pad, y=Math.min(...ms.map(n=>n.y))-pad-14;
     const x2=Math.max(...ms.map(n=>n.x+n.w))+pad, y2=Math.max(...ms.map(n=>n.y+n.h))+pad;
