@@ -48,7 +48,7 @@ func hostFromField(f string) string {
 	if i := strings.Index(f, "://"); i >= 0 {
 		// есть схема — берём всё после ://; пароль может содержать '/' и '@',
 		// поэтому сначала берём хост после ПОСЛЕДНЕГО '@'.
-		f = f[i+3:]
+		f = strings.TrimLeft(f[i+3:], "/") // dns:///host — пустой authority
 		if j := strings.LastIndexByte(f, '@'); j >= 0 {
 			f = f[j+1:]
 		}

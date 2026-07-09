@@ -43,6 +43,7 @@ func TestExtractHosts(t *testing.T) {
 		{"kafka-node-1:9092,external-kafka.confluent.cloud:9092", []string{"kafka-node-1", "external-kafka.confluent.cloud"}},
 		{"mongodb+srv://user:secret@mongo-replica-1:27017,mongo-replica-2:27017/users?replicaSet=rs0", []string{"mongo-replica-1", "mongo-replica-2"}},
 		{"amqp://guest:guest@rabbitmq-broker:5672/vhost", []string{"rabbitmq-broker"}},
+		{"dns:///billing-svc.default.svc.cluster.local:9090", []string{"billing-svc.default.svc.cluster.local"}},
 	}
 	for _, c := range cases {
 		got := ExtractHosts(c.in)

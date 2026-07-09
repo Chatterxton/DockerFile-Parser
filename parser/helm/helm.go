@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -70,17 +71,100 @@ func resolveExpr(expr, chartName, release string, values map[string]string) stri
 	}
 
 	parts := strings.Split(expr, "|")
-	if v, ok := resolveValue(strings.TrimSpace(parts[0]), chartName, release, values); ok {
-		return v
-	}
-	// значение не разрешилось — ищем `default "X"` в пайпе
-	for _, p := range parts[1:] {
-		p = strings.TrimSpace(p)
-		if strings.HasPrefix(p, "default ") {
-			return unquote(strings.TrimSpace(p[len("default "):]))
+	val, ok := resolveMain(strings.TrimSpace(parts[0]), chartName, release, values)
+	if !ok { // значение не разрешилось — ищем `default "X"` в пайпе
+		for _, p := range parts[1:] {
+			if p = strings.TrimSpace(p); strings.HasPrefix(p, "default ") {
+				val, ok = unquote(strings.TrimSpace(p[len("default "):])), true
+				break
+			}
 		}
 	}
-	return ""
+	if !ok {
+		return ""
+	}
+	// пайпы форматирования (важно для tpl-инъекций в env)
+	for _, p := range parts[1:] {
+		p = strings.TrimSpace(p)
+		if n, ok := strings.CutPrefix(p, "nindent "); ok {
+			val = "\n" + indentLines(val, atoiSafe(n))
+		} else if n, ok := strings.CutPrefix(p, "indent "); ok {
+			val = indentLines(val, atoiSafe(n))
+		}
+	}
+	return val
+}
+
+// resolveMain разрешает основное выражение: простое .Values/.Release/.Chart,
+// tpl (рекурсивный рендер значения) и index (доступ в массивы/карты).
+func resolveMain(expr, chartName, release string, values map[string]string) (string, bool) {
+	if v, ok := resolveValue(expr, chartName, release, values); ok {
+		return v, true
+	}
+	if rest, ok := strings.CutPrefix(expr, "tpl "); ok {
+		f := strings.Fields(rest)
+		if len(f) >= 1 && strings.HasPrefix(f[0], ".Values.") {
+			if raw, ok := values[f[0][len(".Values."):]]; ok {
+				return Render(raw, chartName, release, values), true
+			}
+		}
+		return "", false
+	}
+	if strings.HasPrefix(expr, "index ") || strings.HasPrefix(expr, "(index ") {
+		inner, field := expr, ""
+		if strings.HasPrefix(inner, "(") {
+			if c := strings.IndexByte(inner, ')'); c > 0 {
+				if after := strings.TrimSpace(inner[c+1:]); strings.HasPrefix(after, ".") {
+					field = after[1:]
+				}
+				inner = strings.TrimSpace(inner[1:c])
+			}
+		}
+		return resolveIndex(inner, field, values)
+	}
+	return "", false
+}
+
+// resolveIndex: "index .Values.a.b ARG..." → значение по ключу a.b.ARG...(.field).
+// ARG может быть числом, строкой или другим .Values.* (динамический ключ).
+func resolveIndex(inner, field string, values map[string]string) (string, bool) {
+	f := strings.Fields(inner)
+	if len(f) < 2 || f[0] != "index" || !strings.HasPrefix(f[1], ".Values.") {
+		return "", false
+	}
+	key := f[1][len(".Values."):]
+	for _, a := range f[2:] {
+		a = strings.Trim(a, `"'`)
+		if strings.HasPrefix(a, ".Values.") {
+			v, ok := values[a[len(".Values."):]]
+			if !ok {
+				return "", false
+			}
+			a = v
+		}
+		key += "." + a
+	}
+	if field != "" {
+		key += "." + field
+	}
+	v, ok := values[key]
+	return v, ok
+}
+
+func indentLines(s string, n int) string {
+	pad := strings.Repeat(" ", n)
+	lines := strings.Split(s, "\n")
+	for i := range lines {
+		if strings.TrimSpace(lines[i]) != "" {
+			lines[i] = pad + lines[i]
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+func atoiSafe(s string) int {
+	n, _ := strconv.Atoi(strings.TrimSpace(s))
+	return n
 }
 
 func resolveValue(expr, chartName, release string, values map[string]string) (string, bool) {
@@ -119,18 +203,27 @@ func FlattenValues(v map[string]any) map[string]string {
 }
 
 func flatten(prefix string, v any, out map[string]string) {
-	if m, ok := v.(map[string]any); ok {
-		for k, val := range m {
+	switch t := v.(type) {
+	case map[string]any:
+		for k, val := range t {
 			key := k
 			if prefix != "" {
 				key = prefix + "." + k
 			}
 			flatten(key, val, out)
 		}
-		return
-	}
-	if prefix != "" && v != nil {
-		out[prefix] = fmt.Sprint(v)
+	case []any:
+		for i, val := range t { // индекс массива как ключ: shardedDatabases.0.host
+			key := strconv.Itoa(i)
+			if prefix != "" {
+				key = prefix + "." + key
+			}
+			flatten(key, val, out)
+		}
+	default:
+		if prefix != "" && v != nil {
+			out[prefix] = fmt.Sprint(v)
+		}
 	}
 }
 
@@ -258,8 +351,8 @@ func Parse(templates, valuesYAML []byte, opts Options) (*model.Graph, error) {
 
 	for _, r := range workloads {
 		for _, ev := range containerEnv(r.doc, sources) {
-			for _, host := range heuristic.ExtractHosts(ev.value) {
-				if host == "" || ignore[host] {
+			for _, host := range heuristic.ExtractHosts(heuristic.ExpandEnv(ev.value)) {
+				if host == "" || ignore[host] || !heuristic.IsValidHost(host) {
 					continue
 				}
 				if target, ok := heuristic.ResolveInternal(host, names); ok {
@@ -332,6 +425,16 @@ func containerEnv(doc map[string]any, sources map[string]map[string]string) []en
 					data := sources[str(ref["name"])]
 					for _, k := range sortedKeys(data) {
 						envs = append(envs, envPair{k, data[k]})
+					}
+				}
+			}
+		}
+		// command/args — в них тоже прячутся хосты (init-контейнеры, healthcheck-скрипты)
+		for _, key := range []string{"command", "args"} {
+			if list, ok := c[key].([]any); ok {
+				for _, item := range list {
+					if s := str(item); s != "" {
+						envs = append(envs, envPair{key, s})
 					}
 				}
 			}
