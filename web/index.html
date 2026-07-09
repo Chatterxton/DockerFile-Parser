@@ -79,9 +79,6 @@
   #vp.dragnode{cursor:grabbing}
   #graph{display:block;width:100%;height:100%;touch-action:none;user-select:none;-webkit-user-select:none}
   #graph g[data-id]{transition:opacity .12s ease}
-  .zoom{position:absolute;top:14px;right:14px;display:flex;flex-direction:column;gap:6px;z-index:4}
-  .zoom button{width:32px;height:32px;background:#0e1626e6;border:1px solid #26334a;color:#c3d0e4;border-radius:8px;font-size:16px;cursor:pointer;line-height:1}
-  .zoom button:hover{border-color:#33456a}
   .empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none}
   .empty span{font-family:var(--mono);font-size:13px;color:#3d4a60}
   .legend{position:absolute;left:0;right:0;bottom:0;display:flex;align-items:center;gap:16px;padding:9px 16px;background:var(--panel2);border-top:1px solid var(--line2);flex-wrap:wrap;z-index:3}
@@ -182,12 +179,6 @@
         </svg>
 
         <div class="empty" id="empty"><span>// нет данных — вставьте конфиг и нажмите «Построить схему»</span></div>
-
-        <div class="zoom">
-          <button id="zin" title="Приблизить">+</button>
-          <button id="zout" title="Отдалить">−</button>
-          <button id="zfit" title="Вписать">⤢</button>
-        </div>
 
         <div class="legend">
           <div class="it"><span class="sw" style="background:#0e2a45;border:1.5px solid #2f88e0"></span>сервис</div>
@@ -541,13 +532,6 @@ function fit(){
   state.view={tx:(state.vw-w*scale)/2-minX*scale, ty:(state.vh-h*scale)/2-minY*scale, scale};
   applyView();
 }
-function zoomBy(f){
-  state.userMoved=true;
-  const cx=state.vw/2, cy=state.vh/2, v=state.view;
-  const ns=Math.max(.2,Math.min(3,v.scale*f));
-  const wx=(cx-v.tx)/v.scale, wy=(cy-v.ty)/v.scale;
-  state.view={tx:cx-wx*ns, ty:cy-wy*ns, scale:ns}; applyView();
-}
 let _raf=false;
 function scheduleRender(){ if(_raf)return; _raf=true; requestAnimationFrame(()=>{_raf=false; renderScene();}); }
 
@@ -718,9 +702,6 @@ $('expMermaid').addEventListener('click',()=>{ if(!state.mermaid){toast('Пус�
 $('expDot').addEventListener('click',()=>{ if(!state.dot){toast('Пустой граф');return;} download('schema.dot',state.dot,'text/vnd.graphviz'); toast('.dot сохранён'); });
 $('expSvg').addEventListener('click',downloadSvg);
 $('expPng').addEventListener('click',downloadPng);
-$('zin').addEventListener('click',()=>zoomBy(1.25));
-$('zout').addEventListener('click',()=>zoomBy(0.8));
-$('zfit').addEventListener('click',()=>{state.userMoved=false;fit();});
 
 measure();
 new ResizeObserver(()=>{ measure(); if(!state.userMoved && state.built) fit(); }).observe($('vp'));
