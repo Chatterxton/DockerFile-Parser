@@ -1,8 +1,8 @@
 package analyze
 
 import (
-	"depgraph/model"
-	"depgraph/parser/compose"
+	"dockerfile-parser/model"
+	"dockerfile-parser/parser/compose"
 	"testing"
 )
 

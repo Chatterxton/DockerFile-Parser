@@ -1,4 +1,4 @@
-// Command depgraph поднимает веб-сервис визуализации зависимостей сервисов.
+// Command dockerfile-parser поднимает веб-сервис визуализации зависимостей сервисов.
 package main
 
 import (
@@ -6,14 +6,14 @@ import (
 	"log"
 	"net/http"
 
-	"depgraph/web"
+	"dockerfile-parser/web"
 )
 
 func main() {
 	addr := flag.String("addr", ":8080", "адрес прослушивания HTTP")
 	flag.Parse()
 
-	log.Printf("depgraph слушает http://localhost%s", *addr)
+	log.Printf("DockerFile-Parser слушает http://localhost%s", *addr)
 	if err := http.ListenAndServe(*addr, web.NewServer()); err != nil {
 		log.Fatal(err)
 	}

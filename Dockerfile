@@ -6,9 +6,9 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /depgraph ./cmd/depgraph
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /dockerfile-parser ./cmd/dockerfile-parser
 
 FROM gcr.io/distroless/static-debian12
-COPY --from=build /depgraph /depgraph
+COPY --from=build /dockerfile-parser /dockerfile-parser
 EXPOSE 8080
-ENTRYPOINT ["/depgraph"]
+ENTRYPOINT ["/dockerfile-parser"]

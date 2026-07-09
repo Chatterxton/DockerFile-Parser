@@ -11,8 +11,8 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"depgraph/heuristic"
-	"depgraph/model"
+	"dockerfile-parser/heuristic"
+	"dockerfile-parser/model"
 )
 
 // Options управляет разбором чарта.

@@ -1,4 +1,4 @@
-module depgraph
+module dockerfile-parser
 
 go 1.26.3
 

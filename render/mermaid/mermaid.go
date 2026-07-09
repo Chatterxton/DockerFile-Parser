@@ -5,7 +5,7 @@ package mermaid
 import (
 	"strings"
 
-	"depgraph/model"
+	"dockerfile-parser/model"
 )
 
 // Render возвращает Mermaid-код для графа. Если focus непустой — узел focus и

@@ -1,5 +1,5 @@
 # Шаблоны Helm-чарта (эквивалент склейки templates/*.yaml).
-# Вставьте в depgraph при формате «Helm-чарт»; release=myapp, chart=mychart.
+# Вставьте в DockerFile-Parser при формате «Helm-чарт»; release=myapp, chart=mychart.
 # Демонстрирует: динамические имена, k8s-FQDN, envFrom/ConfigMap, Ingress.
 apiVersion: v1
 kind: ConfigMap

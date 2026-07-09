@@ -7,12 +7,12 @@ import (
 	"fmt"
 	"net/http"
 
-	"depgraph/analyze"
-	"depgraph/model"
-	"depgraph/parser/compose"
-	"depgraph/parser/helm"
-	"depgraph/render/dot"
-	"depgraph/render/mermaid"
+	"dockerfile-parser/analyze"
+	"dockerfile-parser/model"
+	"dockerfile-parser/parser/compose"
+	"dockerfile-parser/parser/helm"
+	"dockerfile-parser/render/dot"
+	"dockerfile-parser/render/mermaid"
 )
 
 //go:embed index.html

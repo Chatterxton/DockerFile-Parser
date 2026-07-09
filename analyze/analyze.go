@@ -7,9 +7,9 @@ import (
 	"sort"
 	"strings"
 
-	"depgraph/heuristic"
-	"depgraph/model"
-	"depgraph/parser/compose"
+	"dockerfile-parser/heuristic"
+	"dockerfile-parser/model"
+	"dockerfile-parser/parser/compose"
 )
 
 // Config управляет распознаванием внешних сервисов.

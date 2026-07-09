@@ -5,7 +5,7 @@ package dot
 import (
 	"strings"
 
-	"depgraph/model"
+	"dockerfile-parser/model"
 )
 
 // Render возвращает DOT-код для графа.

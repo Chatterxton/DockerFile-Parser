@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"depgraph/model"
+	"dockerfile-parser/model"
 )
 
 func sampleGraph() *model.Graph {

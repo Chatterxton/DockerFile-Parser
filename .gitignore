@@ -1,6 +1,6 @@
 # Бинарники
-/depgraph
-/depgraph.exe
+/dockerfile-parser
+/dockerfile-parser.exe
 *.exe
 
 # Go
