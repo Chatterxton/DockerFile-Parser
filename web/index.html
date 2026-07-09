@@ -76,7 +76,9 @@
   .gbtn:hover{border-color:#33456a;color:#e6eefb}
   #vp{flex:1;position:relative;overflow:hidden;cursor:grab}
   #vp.grabbing{cursor:grabbing}
-  #graph{display:block;width:100%;height:100%;touch-action:none}
+  #vp.dragnode{cursor:grabbing}
+  #graph{display:block;width:100%;height:100%;touch-action:none;user-select:none;-webkit-user-select:none}
+  #graph g[data-id]{transition:opacity .12s ease}
   .zoom{position:absolute;top:14px;right:14px;display:flex;flex-direction:column;gap:6px;z-index:4}
   .zoom button{width:32px;height:32px;background:#0e1626e6;border:1px solid #26334a;color:#c3d0e4;border-radius:8px;font-size:16px;cursor:pointer;line-height:1}
   .zoom button:hover{border-color:#33456a}
@@ -223,7 +225,7 @@ const state = {
   mermaid:'', dot:'',
   focus:'all', neighbors:false,
   view:{tx:60,ty:60,scale:1}, vw:900, vh:560,
-  built:false, userMoved:false,
+  built:false, userMoved:false, dragId:null,
 };
 
 const esc = (s) => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -434,7 +436,8 @@ function renderScene(){
     }
     parts.push(g2+`</g>`);
   }
-  // nodes
+  // nodes (перетаскиваемый — с подсветкой и поверх остальных)
+  let topPart='';
   for(const n of g.nodes){
     const ty=TYPE[n.type]||TYPE.service;
     let dim=false;
@@ -444,18 +447,21 @@ function renderScene(){
     }
     const op = dim ? dimOp : 1;
     if(op===0) continue;
-    const focused = state.focus===n.id;
+    const isDrag = n.id===state.dragId;
+    const focused = state.focus===n.id || isDrag;
+    const sw = isDrag?2.8:(state.focus===n.id?2.4:1.4);
     const label = n.label.length>18 ? n.label.slice(0,17)+'…' : n.label;
-    parts.push(
+    const s =
       `<g transform="translate(${n.x} ${n.y})" opacity="${op}" data-id="${esc(n.id)}" style="cursor:grab">`+
-      `<rect width="${n.w}" height="${n.h}" rx="12" fill="${ty.fill}" stroke="${focused?ACCENT:ty.stroke}" stroke-width="${focused?2.4:1.4}" filter="url(#nodeshadow)"></rect>`+
+      `<rect width="${n.w}" height="${n.h}" rx="12" fill="${ty.fill}" stroke="${focused?ACCENT:ty.stroke}" stroke-width="${sw}" filter="url(#nodeshadow)"></rect>`+
       `<circle cx="26" cy="${n.h/2}" r="14" fill="${ty.iconbg}"></circle>`+
       `<text x="26" y="${n.h/2+4.5}" text-anchor="middle" font-family="${MONO}" font-size="13" font-weight="700" fill="${ty.accent}">${esc(initialOf(n))}</text>`+
       `<text x="50" y="${n.h/2-3}" font-family="${SANS}" font-size="13.5" font-weight="600" fill="#eef4fd">${esc(label)}</text>`+
       `<text x="50" y="${n.h/2+13}" font-family="${MONO}" font-size="10" fill="${ty.accent}" letter-spacing="0.4">${esc(nodeSub(n))}</text>`+
-      `</g>`
-    );
+      `</g>`;
+    if(isDrag) topPart=s; else parts.push(s);
   }
+  if(topPart) parts.push(topPart);
   $('scene').innerHTML = parts.join('');
   $('nc').textContent = g.nodes.length;
   $('ec').textContent = g.edges.length;
@@ -490,8 +496,31 @@ function zoomBy(f){
   const wx=(cx-v.tx)/v.scale, wy=(cy-v.ty)/v.scale;
   state.view={tx:cx-wx*ns, ty:cy-wy*ns, scale:ns}; applyView();
 }
+let _raf=false;
+function scheduleRender(){ if(_raf)return; _raf=true; requestAnimationFrame(()=>{_raf=false; renderScene();}); }
+
+// clusterBox — текущие габариты рамки сети по её узлам.
+function clusterBox(c){
+  const ms=c.members.map(m=>state.graph.byId[m]).filter(Boolean); if(!ms.length) return null;
+  const pad=22;
+  const x=Math.min(...ms.map(m=>m.x))-pad, y=Math.min(...ms.map(m=>m.y))-pad-14;
+  return {x,y,w:Math.max(...ms.map(m=>m.x+m.w))+pad-x, h:Math.max(...ms.map(m=>m.y+m.h))+pad-y};
+}
+// repel — выталкивает узел из рамок сетей, в которых он НЕ состоит.
+function repel(n){
+  for(const c of (state.graph.clusters||[])){
+    if(!c.members || c.members.indexOf(n.id)>=0) continue; // своя сеть — не отталкивает
+    const b=clusterBox(c); if(!b) continue;
+    if(n.x<b.x+b.w && n.x+n.w>b.x && n.y<b.y+b.h && n.y+n.h>b.y){ // пересечение
+      const pl=(n.x+n.w)-b.x, pr=(b.x+b.w)-n.x, pt=(n.y+n.h)-b.y, pb=(b.y+b.h)-n.y;
+      const m=Math.min(pl,pr,pt,pb); // выталкиваем по стороне наименьшего проникновения
+      if(m===pl) n.x-=pl; else if(m===pr) n.x+=pr; else if(m===pt) n.y-=pt; else n.y+=pb;
+    }
+  }
+}
+
 function attachPan(){
-  const vp=$('vp'); let mode=null,sx=0,sy=0,st=null,moved=false,dragId=null,startPos=null;
+  const vp=$('vp'); let mode=null,sx=0,sy=0,st=null,moved=false,dragId=null,lx=0,ly=0;
   vp.addEventListener('wheel',(e)=>{
     e.preventDefault(); state.userMoved=true;
     const v=state.view, r=vp.getBoundingClientRect(), px=e.clientX-r.left, py=e.clientY-r.top;
@@ -503,8 +532,8 @@ function attachPan(){
     moved=false; sx=e.clientX; sy=e.clientY;
     const ng=e.target.closest('[data-id]');
     if(ng){ // перетаскиваем узел
-      mode='node'; dragId=ng.getAttribute('data-id');
-      const n=state.graph.byId[dragId]; startPos=n?{x:n.x,y:n.y}:null;
+      mode='node'; dragId=ng.getAttribute('data-id'); lx=e.clientX; ly=e.clientY;
+      state.dragId=dragId; vp.classList.add('dragnode'); renderScene(); // подсветка + поверх
     }else{ // панорамируем холст
       mode='pan'; st={...state.view}; vp.classList.add('grabbing');
     }
@@ -516,13 +545,17 @@ function attachPan(){
     if(mode==='pan'){
       state.userMoved=true;
       state.view={tx:st.tx+(e.clientX-sx),ty:st.ty+(e.clientY-sy),scale:st.scale}; applyView();
-    }else if(mode==='node'&&startPos){
+    }else if(mode==='node'){
       const n=state.graph.byId[dragId];
-      if(n){ n.x=startPos.x+(e.clientX-sx)/state.view.scale; n.y=startPos.y+(e.clientY-sy)/state.view.scale; renderScene(); }
+      if(n){ n.x+=(e.clientX-lx)/state.view.scale; n.y+=(e.clientY-ly)/state.view.scale; repel(n); scheduleRender(); }
+      lx=e.clientX; ly=e.clientY; // инкрементально: узел упирается в чужие рамки, как в стену
     }
   });
   const end=()=>{
-    if(mode==='node'&&!moved) setFocus(state.focus===dragId?'all':dragId); // клик по узлу — фокус
+    if(mode==='node'){
+      if(!moved) setFocus(state.focus===dragId?'all':dragId); // клик по узлу — фокус
+      state.dragId=null; vp.classList.remove('dragnode'); renderScene();
+    }
     mode=null; dragId=null; vp.classList.remove('grabbing');
   };
   vp.addEventListener('pointerup',end);
